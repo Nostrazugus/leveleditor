@@ -91,6 +91,26 @@ body.m-read #stage .bub,body.m-read #stage .ico{cursor:help}
 .lrow.hid .ln{opacity:.45}
 .lrow .badge{font-size:10px;background:var(--panel3);border-radius:4px;padding:0 4px;color:var(--muted)}
 .lrow .fsw{width:6px;height:16px;border-radius:2px;flex:none}
+.lrow .fswi{width:18px;height:18px;padding:0;border:none;background:none;flex:none}
+.lrow .lx{width:16px;padding:0;justify-content:center}
+.lrow .ln[draggable=true]{cursor:grab}
+.lsub,.isub{margin:0 4px 6px 26px;border-left:1px solid var(--line);padding-left:4px;max-height:220px;overflow-y:auto}
+.isub{margin-left:20px}
+.oitem{display:flex;align-items:center;gap:6px;padding:2px 4px;border-radius:5px;cursor:pointer;font-size:12px}
+.oitem:hover{background:var(--panel2)}
+.oitem.on{background:#2b3a50}
+.oitem .on{background:none}
+.oitem>span:nth-child(2){flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.oitem button{background:transparent;border:none;padding:0 3px;color:var(--muted)}
+.oitem .oki{width:16px;text-align:center;color:var(--muted)}
+.oitem .obub{width:12px;height:12px;border-radius:50%;display:inline-block;margin:0 2px}
+.oitem .ol{font-size:11px}
+.btnlink{padding:3px 8px;border:1px solid var(--line);border-radius:6px;color:var(--text);text-decoration:none;background:var(--panel2)}
+#tip .tl{display:block;margin-top:7px;color:#1a5fd0;font-weight:600;text-decoration:none}
+#tip .tl:hover{text-decoration:underline}
+.outrow{display:flex;align-items:center;gap:5px;margin:4px 0}
+.outrow input[type=number]{width:54px}
+.outrow select{flex:1;min-width:0}
 .lbtns{display:flex;gap:4px;padding:6px 10px 8px}
 .tabs{display:flex;border-bottom:1px solid var(--line);padding:0 6px}
 .tabs button{flex:1;background:transparent;border:none;border-bottom:2px solid transparent;border-radius:0;padding:8px 4px;color:var(--muted)}
@@ -480,7 +500,8 @@ const S = {
   hiddenTypes: new Set(), hiddenCats: new Set(), showLabels: false,
   toolStyle: { stroke: '#3a3f47', sw: 2, fill: '#d5dce6', fillMode: 'solid', dash: 'solid', opacity: 1, patScale: 2 },
   wallStyle: { fill: '#4a4f58', fillMode: 'solid', stroke: '#1d2025', sw: 1, dash: 'solid', opacity: 1, patScale: 2 },
-  wallThick: 0.25, wallAlign: 'inside', openW: 1, openBot: 0, openTop: 2.1,
+  wallThick: 0.25, wallAlign: 'inside', openW: 1, openType: 'door', openBot: 0, openTop: 2.1,
+  gpe: { bot: 0.8, top: 1.6, fill: '#e8742a', stroke: '#ffffff', sw: 0, side: 'both' },
   procGen: { type: 'foret', density: 1, scale: 1, seed: 1, c: GENS.foret.c, bg: GENS.foret.bg },
   linkStyle: 'critique', textSize: 20, wallH: 3,
   fileHandle: null, clipboard: null, user: '',
@@ -813,8 +834,38 @@ function openingSpan(op, H) {
   return [bot, top];
 }
 /* Portions pleines du mur (les ouvertures coupent la ligne) */
-function wallRuns(o, W = wallLine(o)) {
-  const rs = wallOpeningRanges(o, W);
+/* Type d'objet au mur : porte, fenêtre ou GPE (élément de gameplay posé sur la paroi) */
+function opType(op) { return op.type || ((op.bot || 0) > 0 ? 'window' : 'door'); }
+/* Portions pleines du mur ; avec splitGpe, les zones de GPE forment des portions à part (marquées) */
+function wallRuns(o, W = wallLine(o), splitGpe = false) {
+  const all = wallOpeningRanges(o, W), rs = all.filter(r => opType(r.op) !== 'gpe');
+  if (splitGpe) {
+    const gp = all.filter(r => opType(r.op) === 'gpe');
+    if (gp.length) {
+      const res = [];
+      const holes = rs.map(r => [r[0], r[1]]);
+      const inHole = s => holes.some(([a, b]) => s > a && s < b) || (W.closed && holes.some(([a, b]) => s + W.total > a && s + W.total < b));
+      // abscisses de découpe : ouvertures + GPE
+      const marks = [...rs.flatMap(r => [r[0], r[1]]), ...gp.flatMap(r => [r[0], r[1]])].map(v => W.closed ? ((v % W.total) + W.total) % W.total : clamp(v, 0, W.total));
+      const uniq = [...new Set(marks.map(v => Math.round(v * 100) / 100))].sort((a, b) => a - b);
+      const pts = W.closed ? (uniq.length ? uniq : [0]) : [0, ...uniq, W.total];
+      const n = pts.length, segs = W.closed ? n : n - 1;
+      for (let i = 0; i < segs; i++) {
+        const a = pts[i], b = W.closed ? (i < n - 1 ? pts[i + 1] : pts[0] + W.total) : pts[i + 1];
+        if (b - a < 0.5) continue;
+        const mid = (a + b) / 2, midN = W.closed ? mid % W.total : mid;
+        if (inHole(midN)) continue;
+        const g = gp.find(r => (midN > r[0] && midN < r[1]) || (W.closed && midN + W.total > r[0] && midN + W.total < r[1]));
+        const run = { pts: wallExtract(W, a, b), closed: false }; if (g) run.gpe = g.op;
+        // extrémités visibles seulement au bout du mur ou au bord d'une ouverture (pas aux limites d'un GPE)
+        const near = (u, v) => Math.abs(u - v) < 0.05 || (W.closed && (Math.abs(u - v - W.total) < 0.05 || Math.abs(u + W.total - v) < 0.05));
+        run.capA = (!W.closed && a < 0.05) || holes.some(h => near(h[1], a));
+        run.capB = (!W.closed && b > W.total - 0.05) || holes.some(h => near(h[0], b));
+        if (run.pts.length > 1) res.push(run);
+      }
+      return res;
+    }
+  }
   if (!rs.length) return W.closed ? [{ pts: W.pts.slice(0, -1), closed: true }] : [{ pts: W.pts, closed: false }];
   const m = []; for (const r of rs) { if (m.length && r[0] <= m[m.length - 1][1]) m[m.length - 1][1] = Math.max(m[m.length - 1][1], r[1]); else m.push([...r]); }
   const runs = [];
@@ -832,8 +883,12 @@ function wallOffsets(o, W = wallLine(o)) {
     side = pip(m[0], m[1], W.pts.slice(0, -1)) ? 1 : -1;
   }
   const al = o.align || 'center';
-  return al === 'inside' ? [0, side * T] : al === 'outside' ? [0, -side * T] : [T / 2, -T / 2];
+  const offs = al === 'inside' ? [0, side * T] : al === 'outside' ? [0, -side * T] : [T / 2, -T / 2];
+  offs.side = side; offs.inner = offs[0] * side >= offs[1] * side ? 0 : 1; // bord tourné vers l'intérieur
+  return offs;
 }
+/* Bords (0 = A, 1 = B) qui portent un GPE selon son côté */
+function gpeEdges(op, offs) { const s = op.side || 'both'; return s === 'in' ? [offs.inner] : s === 'out' ? [1 - offs.inner] : [0, 1]; }
 function wallEdges(run, offs) { return [offsetLine(run.pts, offs[0], run.closed), offsetLine(run.pts, offs[1], run.closed)]; }
 /* Repère d'une ouverture à partir d'une abscisse globale */
 function wallSegAt(W, s) { for (let i = W.segStart.length - 1; i >= 0; i--) if (s >= W.segStart[i]) return { seg: i, c: W.segLen[i] ? clamp((s - W.segStart[i]) / W.segLen[i], 0, 1) : 0 }; return { seg: 0, c: 0 }; }
@@ -852,7 +907,7 @@ function heightColor(h) {
 /* ===== Historique (par patchs : compatible avec la collaboration) =====
    Chaque validation calcule la différence objet par objet avec l'état de référence.
    Annuler n'inverse que ses propres changements : les modifications des autres restent. */
-const LOCAL_SETTINGS = ['view', 'floorMode', 'activeFloor', 'heightView', 'isoRot', 'wallMode', 'wallCutOp'];
+const LOCAL_SETTINGS = ['view', 'floorMode', 'activeFloor', 'heightView', 'heightGrad', 'isoRot', 'wallMode', 'wallCutOp'];
 const H = { undo: [], redo: [], B: null };
 function metaStr(doc = S.doc) {
   const { objects, assets, ...rest } = doc; const st = { ...rest.settings };
@@ -1683,10 +1738,13 @@ function gridString() {
 
 /* ===== Objets en coordonnées monde ===== */
 function isClosed(o) { return o.kind === 'rect' || o.kind === 'ellipse' || o.kind === 'proc' || ((o.kind === 'poly' || o.kind === 'path' || o.kind === 'free') && o.closed); }
-function wallFill(o) { return o.style?.fill || '#4a4f58'; }
+function wallFill(o) { return S.doc.settings.heightView ? heightColor(objTopAlt(o)) : (o.style?.fill || '#4a4f58'); }
+/* Altitude absolue du sol et du sommet d'un objet (étage + hauteur au sol + hauteur du volume) */
+function objBaseAlt(o) { return floorAlt(layerById(o.layer)?.floor) + (o.elev || 0); }
+function objTopAlt(o) { return objBaseAlt(o) + (isVolume(o) ? (isNum(o.wallH) ? o.wallH : 3) : 0); }
 function fillOf(o) {
   const s = o.style || {}, st = S.doc.settings;
-  if (st.heightView && isClosed(o) && o.kind !== 'proc' && (isNum(o.elev) || s.fillMode !== 'none')) return heightColor(floorAlt(layerById(o.layer)?.floor) + (o.elev || 0));
+  if (st.heightView && isClosed(o) && o.kind !== 'proc' && (isNum(o.elev) || o.solid || s.fillMode !== 'none')) return heightColor(objTopAlt(o));
   if (!isClosed(o) || !s.fillMode || s.fillMode === 'none') return 'none';
   if (s.fillMode === 'solid') return s.fill;
   return `url(#${ensurePattern(s.fillMode, s.fill, s.patScale)})`;
@@ -1761,6 +1819,17 @@ function objWorld(o) {
       const wcol = s.fill || '#4a4f58';
       wallOpeningRanges(o, W).forEach(r => {
         const seg = wallExtract(W, r[0], r[1]), P = ptsStr(seg).replace(/ /g, 'L');
+        if (opType(r.op) === 'gpe') {
+          const g = r.op, th = Math.max(1.5, 0.12 * ppu());
+          for (const k of gpeEdges(g, offs)) {
+            const dir = Math.sign(offs[k] - offs[1 - k]) || 1;
+            const e1 = offsetLine(seg, offs[k], false), e2 = offsetLine(seg, offs[k] + dir * th, false);
+            const gs = g.sw > 0 ? `stroke="${g.stroke || '#fff'}" stroke-width="${g.sw}" vector-effect="non-scaling-stroke"` : 'stroke="none"';
+            out += `<path d="M${ptsStr([...e1, ...e2.reverse()]).replace(/ /g, 'L')}Z" fill="${g.fill || '#e8742a'}" ${gs} pointer-events="none"/>`;
+          }
+          if (!X) out += `<path class="hit"${id} data-open="${r.i}" d="M${P}" fill="none" stroke="transparent" stroke-width="14" vector-effect="non-scaling-stroke"/>`;
+          return;
+        }
         if ((r.op.bot || 0) > 0) {
           const [A, B] = wallEdges({ pts: seg, closed: false }, offs);
           out += `<path d="M${ptsStr([...A, ...B.reverse()]).replace(/ /g, 'L')}Z" fill="${mix(wcol, '#ffffff', 0.72)}" stroke="${wcol}" stroke-width="${rd(Math.max(0.8, T * 0.08))}" pointer-events="none"/><path d="M${P}" fill="none" stroke="${wcol}" stroke-width="${rd(Math.max(0.6, T * 0.08))}" pointer-events="none"/>`;
@@ -1772,7 +1841,7 @@ function objWorld(o) {
     case 'proc': {
       const P = ptsStr(geomPts(o)), cid = 'cp' + o.id + (X ? 'x' : '');
       if (S.doc.settings.heightView) {
-        out = `<g${id}${op}><polygon points="${P}" fill="${heightColor(floorAlt(layerById(o.layer)?.floor) + (o.elev || 0))}" ${strokeAttrs(s)} pointer-events="all"/></g>`;
+        out = `<g${id}${op}><polygon points="${P}" fill="${heightColor(objTopAlt(o))}" ${strokeAttrs(s)} pointer-events="all"/></g>`;
       } else {
         out = `<g${id}${op}><clipPath id="${cid}"><polygon points="${P}"/></clipPath><g clip-path="url(#${cid})">${genProc(o)}</g><polygon points="${P}" fill="none" ${strokeAttrs(s)}/>${X ? '' : `<polygon points="${P}" fill="transparent" stroke="none" pointer-events="all"/>`}</g>`;
       }
@@ -1798,10 +1867,20 @@ function renderVolumesIso(list) {
   const add = (p, v) => [p[0] + v[0], p[1] + v[1]];
   const edge = 'stroke="#000" stroke-opacity=".35" stroke-width="0.8" vector-effect="non-scaling-stroke" stroke-linejoin="round"';
   const faceFill = (col, nrm) => { const pn = proj(nrm[0], nrm[1]); return pn[1] > 0.001 ? shade(col, 0.12 + 0.14 * Math.sign(pn[0])) : shade(col, -0.25); };
+  const grad = st.heightView && st.heightGrad; let gn = 0;
+  /* Remplissage d'une face verticale : couleur ombrée, ou dégradé de hauteur (isolignes parallèles à l'arête) */
+  const faceDef = (o, A, B, v0, v1, z0, z1, col, nrm) => {
+    if (!grad) return { def: '', fill: faceFill(col, nrm) };
+    const e = [B[0] - A[0], B[1] - A[1]], el = Math.hypot(e[0], e[1]) || 1, eh = [e[0] / el, e[1] / el];
+    const v = [v1[0] - v0[0], v1[1] - v0[1]], dv = v[0] * eh[0] + v[1] * eh[1], g = [v[0] - dv * eh[0], v[1] - dv * eh[1]];
+    if (Math.hypot(g[0], g[1]) < 1e-6) return { def: '', fill: heightColor(objBaseAlt(o) + z1) };
+    const p0 = [A[0] + v0[0], A[1] + v0[1]], gid = `hg${o.id}${S.exporting ? 'x' : ''}_${gn++}`, k = proj(nrm[0], nrm[1])[1] > 0.001 ? 0 : -0.18;
+    return { def: `<linearGradient id="${gid}" gradientUnits="userSpaceOnUse" x1="${F(p0[0])}" y1="${F(p0[1])}" x2="${F(p0[0] + g[0])}" y2="${F(p0[1] + g[1])}"><stop offset="0" stop-color="${shade(heightColor(objBaseAlt(o) + z0), k)}"/><stop offset="1" stop-color="${shade(heightColor(objBaseAlt(o) + z1), k)}"/></linearGradient>`, fill: `url(#${gid})` };
+  };
   for (const o of list) {
     const id = X ? '' : ` data-oid="${o.id}"`, s = o.style || {}, baseOp = s.opacity ?? 1;
     const base = o.elev || 0, vb = unproj(0, -liftOfAlt(base)), vt = unproj(0, -liftOfAlt(base + wallHeight(o)));
-    const col = o.kind === 'wall' ? wallFill(o) : s.fillMode && s.fillMode !== 'none' ? s.fill : (s.stroke || '#9aa3ad');
+    const col = st.heightView ? heightColor(objTopAlt(o)) : o.kind === 'wall' ? wallFill(o) : s.fillMode && s.fillMode !== 'none' ? s.fill : (s.stroke || '#9aa3ad');
     const edge = s.sw > 0 && s.stroke && s.stroke !== 'none' ? `stroke="${s.stroke}" stroke-width="${rd(Math.max(0.6, Math.min(s.sw, 3)))}" vector-effect="non-scaling-stroke" stroke-linejoin="round"` : 'stroke="none"';
     const capStroke = s.sw > 0 && s.stroke && s.stroke !== 'none' ? `stroke="${s.stroke}" stroke-width="${s.sw}" stroke-linejoin="round"` : edge;
     if (o.kind === 'wall') {
@@ -1812,7 +1891,7 @@ function renderVolumesIso(list) {
       const emit = (run, z0, z1) => {
         if (z1 - z0 < 0.01) return;
         const v0 = at(z0), v1 = at(z1);
-        const [A, B] = wallEdges(run, offs), n = run.pts.length, segs = run.closed ? n : n - 1;
+        const [A, B] = wallEdges(run, offs), n = run.pts.length, segs = run.closed ? n : n - 1, segOp = [];
         for (let i = 0; i < segs; i++) {
           const j = (i + 1) % n, a = run.pts[i], b = run.pts[j];
           const dx = b[0] - a[0], dy = b[1] - a[1], l = Math.hypot(dx, dy) || 1, nl = [-dy / l, dx / l], m = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
@@ -1823,22 +1902,37 @@ function renderVolumesIso(list) {
           const cut = o.wallCut === 'always' || (o.wallCut !== 'never' && st.wallMode === 'cut' && isFront);
           const op = rd((cut ? st.wallCutOp : 1) * baseOp);
           const sA = offs[0] >= offs[1] ? nl : [-nl[0], -nl[1]], sB = [-sA[0], -sA[1]];
-          const fa = { pn: proj(sA[0], sA[1])[1], svg: `<polygon${id} points="${P([add(A[i], v0), add(A[j], v0), add(A[j], v1), add(A[i], v1)])}" fill="${faceFill(col, sA)}" ${edge}/>` };
-          const fb = { pn: proj(sB[0], sB[1])[1], svg: `<polygon${id} points="${P([add(B[i], v0), add(B[j], v0), add(B[j], v1), add(B[i], v1)])}" fill="${faceFill(col, sB)}" ${edge}/>` };
+          const dA = faceDef(o, A[i], A[j], v0, v1, z0, z1, col, sA), dB = faceDef(o, B[i], B[j], v0, v1, z0, z1, col, [-sA[0], -sA[1]]);
+          const fa = { pn: proj(sA[0], sA[1])[1], svg: `${dA.def}<polygon${id} points="${P([add(A[i], v0), add(A[j], v0), add(A[j], v1), add(A[i], v1)])}" fill="${dA.fill}" ${edge}/>` };
+          const fb = { pn: proj(sB[0], sB[1])[1], svg: `${dB.def}<polygon${id} points="${P([add(B[i], v0), add(B[j], v0), add(B[j], v1), add(B[i], v1)])}" fill="${dB.fill}" ${edge}/>` };
           const [back, frnt] = fa.pn > fb.pn ? [fb, fa] : [fa, fb];
           let g = '';
           if (cut && z0 === 0) g += `<polygon${id} points="${P([A[i], A[j], B[j], B[i]].map(p => add(p, vb)))}" fill="${col}" fill-opacity="${rd(0.55 * baseOp)}" ${edge}/>`;
           g += `<g opacity="${op}">${back.svg}${frnt.svg}<polygon${id} points="${P([A[i], A[j], B[j], B[i]].map(p => add(p, v1)))}" fill="${shade(col, 0.32)}" ${edge}/>`
             + (z0 > 0 ? `<polygon${id} points="${P([A[i], A[j], B[j], B[i]].map(p => add(p, v0)))}" fill="${shade(col, -0.35)}" ${edge}/>` : '') + `</g>`;
+          if (run.gpe && z0 === 0) {
+            const gp = run.gpe, H = wallHeight(o), gb = clamp(gp.bot ?? 0.8, 0, H), gt = clamp(isNum(gp.top) ? gp.top : 1.6, gb, H);
+            if (gt - gb > 0.01) for (const k of gpeEdges(gp, offs)) {
+              const E = k === 0 ? A : B, dirS = Math.sign(offs[k] - offs[1 - k]) || 1, nrm = [nl[0] * dirS, nl[1] * dirS];
+              if (proj(nrm[0], nrm[1])[1] <= 0.001) continue;  // face cachée
+              const pu = [nrm[0] * 0.8, nrm[1] * 0.8], gv0 = at(gb), gv1 = at(gt);
+              const q = [add(add(E[i], pu), gv0), add(add(E[j], pu), gv0), add(add(E[j], pu), gv1), add(add(E[i], pu), gv1)];
+              const gs = gp.sw > 0 ? `stroke="${gp.stroke || '#fff'}" stroke-width="${gp.sw}" vector-effect="non-scaling-stroke" stroke-linejoin="round"` : 'stroke="none"';
+              g += `<polygon points="${P(q)}" fill="${gp.fill || '#e8742a'}" ${gs} opacity="${op}" pointer-events="none"/>`;
+            }
+          }
           pieces.push({ depth: proj(m[0], m[1])[1] + z0 * 1e-4, svg: g });
+          segOp[i] = op;
         }
-        if (!run.closed) for (const k of [0, n - 1]) {
-          const g = `<polygon${id} points="${P([add(A[k], v0), add(B[k], v0), add(B[k], v1), add(A[k], v1)])}" fill="${shade(col, 0.05)}" ${edge} opacity="${rd(baseOp)}"/>`;
+        if (!run.closed) for (const [k, show] of [[0, run.capA !== false], [n - 1, run.capB !== false]]) {
+          if (!show) continue;
+          const g = `<polygon${id} points="${P([add(A[k], v0), add(B[k], v0), add(B[k], v1), add(A[k], v1)])}" fill="${shade(col, 0.05)}" ${edge} opacity="${segOp[k ? segs - 1 : 0] ?? rd(baseOp)}"/>`;
           pieces.push({ depth: proj(run.pts[k][0], run.pts[k][1])[1] + 0.01, svg: g });
         }
       };
-      for (const run of wallRuns(o, W)) emit(run, 0, H);
+      for (const run of wallRuns(o, W, true)) emit(run, 0, H);
       for (const r of wallOpeningRanges(o, W)) {
+        if (opType(r.op) === 'gpe') continue;
         const seg = { pts: wallExtract(W, r[0], r[1]), closed: false }, [bot, top] = openingSpan(r.op, H);
         emit(seg, 0, bot);          // allège (fenêtre)
         emit(seg, top, H);          // linteau
@@ -1856,8 +1950,9 @@ function renderVolumesIso(list) {
         const a = ring[i], b = ring[(i + 1) % n], dx = b[0] - a[0], dy = b[1] - a[1], l = Math.hypot(dx, dy) || 1;
         let out = [-dy / l, dx / l]; const m = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
         if (pip(m[0] + out[0] * 0.5, m[1] + out[1] * 0.5, ring)) out = [-out[0], -out[1]];
-        const ff = faceFill(col, out), seam = n > 8 ? `stroke="${ff}" stroke-width="0.8" vector-effect="non-scaling-stroke"` : edge;
-        const f = `<polygon${id} points="${P([add(a, vb), add(b, vb), add(b, vt), add(a, vt)])}" fill="${ff}" ${seam}/>`;
+        const fd = faceDef(o, a, b, vb, vt, 0, wallHeight(o), col, out), ff = fd.fill;
+        const seam = n > 8 ? (grad ? `stroke="none"` : `stroke="${ff}" stroke-width="0.8" vector-effect="non-scaling-stroke"`) : edge;
+        const f = `${fd.def}<polygon${id} points="${P([add(a, vb), add(b, vb), add(b, vt), add(a, vt)])}" fill="${ff}" ${seam}/>`;
         if (proj(out[0], out[1])[1] > 0.001) front += f; else back += f;
       }
       const cap = `<g transform="translate(${F(vt[0] - vb[0])},${F(vt[1] - vb[1])})">${objWorld(o)}</g>`;
@@ -1872,10 +1967,21 @@ function renderVolumesIso(list) {
 }
 /* ===== Objets en coordonnées écran (taille constante) ===== */
 function bubbleR(L) { return L?.size || 14; }
-function linkScreenPts(l) {
+/* Tracé d'un lien en coordonnées monde : points de passage, ou courbe de Bézier (ctrl) */
+function linkDefaultCtrl(a, b) { return [[a.x + (b.x - a.x) / 3, a.y + (b.y - a.y) / 3], [a.x + 2 * (b.x - a.x) / 3, a.y + 2 * (b.y - a.y) / 3]]; }
+function linkWorldPts(l) {
   const a = obj(l.from), b = obj(l.to); if (!a || !b) return null;
-  const la = objLift(a), lb = objLift(b);
-  return [W2S(a.x, a.y, la), ...(l.wps || []).map(p => W2S(p[0], p[1], la)), W2S(b.x, b.y, lb)];
+  if (l.ctrl && !(l.wps || []).length) {
+    const A = { x: a.x, y: a.y, ox: l.ctrl[0][0], oy: l.ctrl[0][1] }, B = { x: b.x, y: b.y, ix: l.ctrl[1][0], iy: l.ctrl[1][1] };
+    const out = []; for (let k = 0; k <= 28; k++) out.push(cubicAt(A, B, k / 28)); return out;
+  }
+  return [[a.x, a.y], ...(l.wps || []), [b.x, b.y]];
+}
+function linkScreenPts(l) {
+  const a = obj(l.from), b = obj(l.to), pts = linkWorldPts(l); if (!pts) return null;
+  const la = objLift(a), lb = objLift(b), n = pts.length - 1;
+  if (l.ctrl && !(l.wps || []).length) return pts.map((p, k) => W2S(p[0], p[1], la + (lb - la) * k / n));
+  return pts.map((p, k) => W2S(p[0], p[1], k === n ? lb : la));
 }
 function trimPts(pts, r0, r1) {
   const p = pts.map(x => [...x]);
@@ -2011,7 +2117,13 @@ function selOverlay(o, single) {
   if (o.kind === 'link') {
     const pts = linkScreenPts(o); if (!pts) return '';
     s += `<path d="M${pts.map(p => F(p[0]) + ',' + F(p[1])).join('L')}" fill="none" stroke="${ACC}" stroke-opacity=".35" stroke-width="9" stroke-linecap="round" pointer-events="none"/>`;
-    if (single && S.mode === 'edit') (o.wps || []).forEach((w, i) => { const p = pts[i + 1]; s += `<circle class="hdlv" data-wp="${i}" data-voi="${o.id}" cx="${F(p[0])}" cy="${F(p[1])}" r="5"/>`; });
+    if (single && S.mode === 'edit') {
+      if ((o.wps || []).length) (o.wps || []).forEach((w, i) => { const p = pts[i + 1]; s += `<circle class="hdlv" data-wp="${i}" data-voi="${o.id}" cx="${F(p[0])}" cy="${F(p[1])}" r="5"/>`; });
+      else {
+        const a = obj(o.from), b = obj(o.to), c = o.ctrl || linkDefaultCtrl(a, b), ends = [pts[0], pts[pts.length - 1]];
+        c.forEach((q, i) => { const p = W2S(q[0], q[1], objLift(i ? b : a)); s += `<line x1="${F(ends[i][0])}" y1="${F(ends[i][1])}" x2="${F(p[0])}" y2="${F(p[1])}" stroke="${ACC}" stroke-dasharray="3 3" pointer-events="none"/><circle class="hdlb" data-lc="${i}" data-voi="${o.id}" cx="${F(p[0])}" cy="${F(p[1])}" r="5"/>`; });
+      }
+    }
     return s;
   }
   if (SCREEN_KINDS.has(o.kind)) {
@@ -2194,7 +2306,7 @@ const TOOLS = [
   { id: 'polygon', key: 'p', label: 'Polygone', g: 1, layer: 'draw', ico: '<path d="M10 3l7 5-2.8 8H5.8L3 8z"/>' },
   { id: 'polyline', key: 'l', label: 'Ligne brisée', g: 1, layer: 'draw', ico: '<path d="M3 15l4-8 5 6 5-9"/>' },
   { id: 'wall', key: 'w', label: 'Mur', g: 1, layer: 'draw', ico: '<path d="M4 16V5h12v7" stroke-width="3.4" stroke-linecap="square"/>' },
-  { id: 'door', key: 'd', label: 'Ouverture (porte / fenêtre) dans un mur', g: 1, layer: 'draw', ico: '<path d="M2.5 15h4M13.5 15h4" stroke-width="3.2" stroke-linecap="square"/><path d="M6.5 15A7 7 0 0 1 13.5 8V15" stroke-dasharray="2 2"/>' },
+  { id: 'door', key: 'd', label: 'Objet au mur : porte, fenêtre, GPE', g: 1, layer: 'draw', ico: '<path d="M2.5 15h4M13.5 15h4" stroke-width="3.2" stroke-linecap="square"/><path d="M6.5 15A7 7 0 0 1 13.5 8V15" stroke-dasharray="2 2"/>' },
   { id: 'pen', key: 'b', label: 'Courbe de Bézier', g: 1, layer: 'draw', ico: '<path d="M4 16C5 8 11 5 16 4"/><path d="M2 11l5 0" stroke-width="1.2"/><circle cx="4" cy="16" r="1.7" fill="currentColor"/><circle cx="16" cy="4" r="1.7" fill="currentColor"/>' },
   { id: 'free', key: 'f', label: 'Main levée', g: 1, layer: 'draw', ico: '<path d="M3 13c2-5 4 2 6-3s3-5 5-1 2 3 3 1"/>' },
   { id: 'text', key: 't', label: 'Texte', g: 1, layer: 'draw', ico: '<path d="M4 5h12M10 5v11M7.5 16h5"/>' },
@@ -2214,7 +2326,7 @@ const HINTS = {
   polygon: 'Clic : ajouter un point · Clic sur le 1er point, Entrée ou double-clic : fermer · Retour arrière : retirer le dernier point',
   polyline: 'Clic : ajouter un point · Entrée, double-clic ou clic droit : terminer · Maj : angles à 45°',
   wall: 'Trace la ligne d’un mur (bande épaisse) · Clic sur le 1er point : boucle fermée · Entrée ou double-clic : terminer',
-  door: 'Clic sur un mur : crée une ouverture entre deux nouveaux nœuds (bas 0 = porte) · règle sa largeur en déplaçant ces nœuds avec l’outil A · Alt+clic sur une ouverture : la reboucher',
+  door: 'Clic sur un mur : pose une porte, une fenêtre ou un GPE (choix dans la barre) entre deux nouveaux nœuds · largeur : déplace ces nœuds avec l’outil A · Alt+clic : retirer',
   pen: 'Clic : point d’angle · Clic-glisser : point courbe · Clic sur le 1er point : fermer · Entrée : terminer',
   free: 'Glisser pour dessiner à main levée (revenir au départ ferme la forme)',
   text: 'Clic pour poser un texte',
@@ -2273,7 +2385,7 @@ function canEdit(o) {
   if (S.mode === 'comment') return o.kind === 'note';
   return false;
 }
-function hasInfo(o) { return o && (o.kind === 'icon' || (o.kind === 'bubble' && (o.title || o.desc))); }
+function hasInfo(o) { return !!o && o.kind !== 'link' && (o.kind === 'icon' || !!safeUrl(o.url) || (o.kind === 'bubble' && !!(o.title || o.desc))); }
 
 /* ===== Événements pointeur ===== */
 function svgPt(e) { const r = $('#stage').getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; }
@@ -2287,6 +2399,7 @@ function hitInfo(e) {
     wp: wp && { oid: wp.dataset.voi, i: +wp.dataset.wp },
     o: oe ? obj(oe.dataset.oid) : null,
     rot: !!t.closest('[data-rot]'),
+    lc: (() => { const e = t.closest('[data-lc]'); return e && { oid: e.dataset.voi, i: +e.dataset.lc }; })(),
   };
 }
 function wAt(sp, lift, mode) { return snap(S2W(sp[0], sp[1], lift), mode); }
@@ -2296,7 +2409,8 @@ function onDown(e) {
   const sp = svgPt(e); S.cursorS = sp; S.altDown = e.altKey; S.shiftDown = e.shiftKey;
   if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur();
   if (popJustClosed) { popJustClosed = false; return; }
-  if (e.button === 1 || (e.button === 0 && (S.spaceDown || S.tool === 'hand'))) { startPan(sp); e.preventDefault(); return; }
+  if (e.button === 0 && !S.spaceDown && (S.mode === 'read' || S.tool === 'hand')) { const h0 = hitInfo(e); if (hasInfo(h0.o)) { pinTip(h0.o); return; } }
+  if (e.button === 1 || (e.button === 0 && (S.spaceDown || S.tool === 'hand'))) { hideTip(true); startPan(sp); e.preventDefault(); return; }
   if (e.button === 2) {
     if (S.draft) finishDraft();
     else if (S.flowCur) { S.flowCur = null; scheduleRender(); }
@@ -2342,6 +2456,7 @@ function startPan(sp) { S.drag = { type: 'pan', sp, v0: { ...S.view } }; $('#sta
 function downSelect(e, sp, hi, o) {
   if (S.mode === 'edit') {
     if (hi.rot) { startRotate(sp); return; }
+    if (hi.lc && obj(hi.lc.oid)) { S.drag = { type: 'lctrl', id: hi.lc.oid, i: hi.lc.i }; return; }
     if (hi.h && obj(hi.h.oid)) { const O = obj(hi.h.oid); S.drag = { type: 'resize', id: O.id, h: hi.h.h, O: deep(O), sp }; return; }
     if (hi.wp && obj(hi.wp.oid)) { const l = obj(hi.wp.oid); if (e.altKey) { l.wps.splice(hi.wp.i, 1); commit(); return; } S.drag = { type: 'wp', id: l.id, i: hi.wp.i, sp }; return; }
   }
@@ -2403,7 +2518,7 @@ function dragRotate(d, sp, e) {
   d.ids.forEach((id, i) => { const o = obj(id); if (o) { rotateObj(o, d.orig[i], d.c, deg); markObj(o); } });
   scheduleRender();
 }
-function afterSelect() { refreshProps(); renderToolOptions(); scheduleRender(); }
+function afterSelect() { refreshProps(); renderToolOptions(); if (expandedLayers.size) refreshLayersPanel(); scheduleRender(); }
 
 function refPoint(O) {
   if (O.cx !== undefined) return [O.cx - O.w / 2, O.cy - O.h / 2];
@@ -2415,14 +2530,14 @@ function translateObj(o, O, dx, dy) {
   if (O.cx !== undefined) { o.cx = f1(O.cx + dx); o.cy = f1(O.cy + dy); }
   else if (O.pts) o.pts = O.pts.map(p => [f1(p[0] + dx), f1(p[1] + dy)]);
   else if (O.nodes) o.nodes = O.nodes.map(n => ({ x: n.x + dx, y: n.y + dy, ix: n.ix + dx, iy: n.iy + dy, ox: n.ox + dx, oy: n.oy + dy }));
-  else if (O.kind === 'link') o.wps = (O.wps || []).map(p => [f1(p[0] + dx), f1(p[1] + dy)]);
+  else if (O.kind === 'link') { o.wps = (O.wps || []).map(p => [f1(p[0] + dx), f1(p[1] + dy)]); if (O.ctrl) o.ctrl = O.ctrl.map(p => [f1(p[0] + dx), f1(p[1] + dy)]); }
   else if (O.x !== undefined) { o.x = f1(O.x + dx); o.y = f1(O.y + dy); }
 }
 function startMove(sp) {
   const ids = [...S.sel].filter(id => obj(id) && obj(id).kind !== 'link' && canEdit(obj(id)));
   // liens dont les deux extrémités bougent : on déplace aussi leurs points de passage
   const moving = new Set(ids);
-  for (const o of Object.values(S.doc.objects)) if (o.kind === 'link' && moving.has(o.from) && moving.has(o.to) && o.wps?.length) ids.push(o.id);
+  for (const o of Object.values(S.doc.objects)) if (o.kind === 'link' && moving.has(o.from) && moving.has(o.to) && (o.wps?.length || o.ctrl)) ids.push(o.id);
   if (!ids.length) return;
   S.drag = { type: 'move', sp, ids, orig: ids.map(id => deep(obj(id))), moved: false };
 }
@@ -2477,7 +2592,7 @@ function dragResize(d, sp, e) {
 function downDoor(e, sp, hi, o) {
   if (S.mode !== 'edit') return;
   const openEl = e.target.closest?.('[data-open]');
-  if (o && o.kind === 'wall' && openEl && e.altKey) { const n = o.nodes?.[+openEl.dataset.open]; if (n) delete n.op; S.sel = new Set([o.id]); commit(); toast('Ouverture rebouchée (les nœuds restent)'); return; }
+  if (o && o.kind === 'wall' && openEl && e.altKey) { const n = o.nodes?.[+openEl.dataset.open]; if (n) delete n.op; S.sel = new Set([o.id]); commit(); toast('Objet retiré du mur (les nœuds restent)'); return; }
   const wall = o && o.kind === 'wall' ? o : null; let best = null;
   const cands = wall ? [wall] : Object.values(S.doc.objects).filter(x => x.kind === 'wall' && canEdit(x));
   for (const w of cands) {
@@ -2492,9 +2607,9 @@ function downDoor(e, sp, hi, o) {
   if (t0 < 0.02) { t1 += 0.02 - t0; t0 = 0.02; } if (t1 > 0.98) { t0 -= t1 - 0.98; t1 = 0.98; } t0 = Math.max(0.02, t0);
   if (t1 - t0 < 0.01) { toast('Segment trop court pour une ouverture'); return; }
   splitNodes(nodes, best.i, t1); splitNodes(nodes, best.i, t0 / t1);
-  nodes[best.i + 1].op = { bot: S.openBot, top: S.openTop };
+  nodes[best.i + 1].op = S.openType === 'gpe' ? { type: 'gpe', ...deep(S.gpe) } : S.openType === 'window' ? { type: 'window', bot: S.openBot || 0.9, top: S.openTop } : { type: 'door', bot: 0, top: S.openTop };
   S.sel = new Set([w.id]); S.activeLayer = w.layer; markObj(w); commit();
-  toast('Ouverture créée : déplace ses deux nœuds orange (outil A) pour régler sa largeur', 3500);
+  toast(`${{ door: 'Porte', window: 'Fenêtre', gpe: 'GPE' }[S.openType]} posé(e) : déplace ses deux nœuds orange (outil A) pour régler sa largeur`, 3500);
 }
 function deleteVertex(o, i) {
   if (o.pts) { const min = isClosed(o) ? 3 : 2; if (o.pts.length <= min) { toast('Nombre minimal de points atteint'); return; } o.pts.splice(i, 1); }
@@ -2643,7 +2758,7 @@ function insertBubbleOnLink(l, sp) {
   placeAfter(L, b.id, l.from);
   const wps = l.wps || [];
   const l2 = addObject({ kind: 'link', from: b.id, to: l.to, style: l.style, both: l.both, wps: wps.slice(ns.i), label: '', color: l.color }, L.id);
-  l.to = b.id; l.wps = wps.slice(0, ns.i);
+  l.to = b.id; l.wps = l.ctrl ? [] : wps.slice(0, ns.i); if (l.ctrl) { delete l.ctrl; l2.wps = []; }
   S.flowCur = b.id; S.sel = new Set([b.id]); commit();
   toast('Bulle insérée et numérotation mise à jour');
   return l2;
@@ -2652,7 +2767,8 @@ function insertWaypoint(l, sp) {
   const pts = linkScreenPts(l); if (!pts) return;
   const ns = nearestSeg(pts, sp, false);
   const w = S2W(ns.q[0], ns.q[1], layerLift(layerById(l.layer)));
-  l.wps ||= []; l.wps.splice(ns.i, 0, [f1(w[0]), f1(w[1])]);
+  if (l.ctrl) { delete l.ctrl; l.wps = []; }
+  l.wps ||= []; l.wps.splice(Math.min(ns.i, l.wps.length), 0, [f1(w[0]), f1(w[1])]);
   S.sel = new Set([l.id]); commit();
 }
 
@@ -2678,6 +2794,12 @@ function onMove(e) {
     case 'flowpress': if (d.moved || dist(sp, d.sp) > 4) { d.moved = true; dragMove(d, sp); } break;
     case 'resize': dragResize(d, sp, e); break;
     case 'rotate': dragRotate(d, sp, e); break;
+    case 'lctrl': {
+      const l = obj(d.id); if (!l) break; const a = obj(l.from), b = obj(l.to); if (!a || !b) break;
+      if (!l.ctrl) l.ctrl = linkDefaultCtrl(a, b);
+      const w = S2W(sp[0], sp[1], objLift(d.i ? b : a)); l.ctrl[d.i] = [f1(w[0]), f1(w[1])]; l.wps = [];
+      markObj(l); scheduleRender(); break;
+    }
     case 'vertex': {
       if (!d.moved && dist(sp, d.sp) < 3) break; d.moved = true;
       const o = obj(d.id); if (!o) break; const w = snap(S2W(sp[0], sp[1], objLift(o)));
@@ -2708,7 +2830,7 @@ function onUp(e) {
   switch (d.type) {
     case 'move': if (d.moved) commit(); else refreshProps(); break;
     case 'flowpress': upFlowPress(d); break;
-    case 'resize': case 'vertex': case 'bezh': case 'wp': case 'rotate': commit(); break;
+    case 'resize': case 'vertex': case 'bezh': case 'wp': case 'rotate': case 'lctrl': commit(); break;
     case 'marquee': {
       const [a, b, c, dd] = S.marquee; S.marquee = null;
       const r = [Math.min(a, c), Math.min(b, dd), Math.max(a, c), Math.max(b, dd)];
@@ -3052,7 +3174,9 @@ function renderToolOptions() {
     } else if (t === 'wall' || t === 'door' || ((t === 'select' || t === 'node') && selWalls.length)) {
       const w0 = selWalls[0], src = w0?.style || S.wallStyle, U = esc(S.doc.grid.unitName);
       styleTargets = selWalls; defaults = S.wallStyle;
-      box = t === 'door' ? `<span class="muted">Nouvelle ouverture</span><label>Bas ${numIn('openBot', S.openBot, 'min="0" step="0.1" style="width:52px"')}</label><label>Haut ${numIn('openTop', S.openTop, 'min="0" step="0.1" style="width:52px"')} ${U}</label><button data-preset="door" title="Bas 0 m, haut 2,10 m">Porte</button><button data-preset="window" title="Bas 0,90 m, haut 2,10 m">Fenêtre</button>`
+      box = t === 'door' ? `<label>Type ${selIn('openType', S.openType, { door: 'Porte', window: 'Fenêtre', gpe: 'GPE' })}</label>` + (S.openType === 'gpe'
+          ? `<label>Bas ${numIn('gpe.bot', S.gpe.bot, 'min="0" step="0.1" style="width:50px"')}</label><label>Haut ${numIn('gpe.top', S.gpe.top, 'min="0" step="0.1" style="width:50px"')} ${U}</label><label>Couleur ${colorIn('gpe.fill', S.gpe.fill)}</label><label>Bordure ${colorIn('gpe.stroke', S.gpe.stroke)}${numIn('gpe.sw', S.gpe.sw, 'min="0" step="0.5" style="width:44px"')}</label><label>Côté ${selIn('gpe.side', S.gpe.side, { both: 'Les deux', in: 'Intérieur', out: 'Extérieur' })}</label>`
+          : `${S.openType === 'window' ? `<label>Bas ${numIn('openBot', S.openBot, 'min="0" step="0.1" style="width:52px"')}</label>` : ''}<label>Haut ${numIn('openTop', S.openTop, 'min="0" step="0.1" style="width:52px"')} ${U}</label>`)
         : `${selWalls.length ? '<span class="muted">Mur</span>' : ''}<label>Couleur ${colorIn('fill', src.fill)}</label><label>Contour ${colorIn('stroke', src.stroke)}</label><label>Épaisseur ${numIn('thick', w0 ? (w0.thick ?? 0.25) : S.wallThick, 'min="0.01" step="0.05" style="width:58px"')} ${U}</label><label>Hauteur ${numIn('wallH', w0 ? (w0.wallH ?? 3) : S.wallH, 'min="0" step="0.5" style="width:52px"')} ${U}</label>`;
     }
     else if (t === 'proc') box = `<label>Motif ${selIn('type', S.procGen.type, Object.fromEntries(Object.entries(GENS).map(([k, v]) => [k, v.label])))}</label><label>Densité ${rangeIn('density', S.procGen.density, 0.2, 3, 0.1)}</label>`;
@@ -3077,6 +3201,8 @@ function renderToolOptions() {
       if (k === 'size') { S.textSize = v; return; }
       if (k === 'linkStyle') { S.linkStyle = v; return; }
       if (k === 'openBot' || k === 'openTop') { if (isNum(v) && v >= 0) S[k] = v; return; }
+      if (k === 'openType') { S.openType = v; if (v === 'door') S.openBot = 0; else if (v === 'window' && !S.openBot) S.openBot = 0.9; return; }
+      if (k.startsWith('gpe.')) { const kk = k.slice(4); S.gpe[kk] = el.type === 'color' || el.tagName === 'SELECT' ? el.value : (isNum(v) ? v : S.gpe[kk]); return; }
       if (k === 'thick') { if (isNum(v) && v > 0) { S.wallThick = v; for (const o of styleTargets) { o.thick = v; markObj(o); } scheduleRender(); } return; }
       if (defaults) {
         if (k === 'wallH') { if (isNum(v)) { S.wallH = v; for (const o of styleTargets) { o.wallH = v; markObj(o); } } }
@@ -3086,9 +3212,8 @@ function renderToolOptions() {
       if (target) { target[k] = v; if (t === 'proc' && k === 'type') { S.procGen.c = GENS[v].c; S.procGen.bg = GENS[v].bg; } }
     };
     el.addEventListener('input', ap);
-    el.addEventListener('change', () => { ap(); if (styleTargets.length) commit(); else if (k === 'fillMode') renderToolOptions(); });
+    el.addEventListener('change', () => { ap(); if (styleTargets.length) commit(); else if (k === 'fillMode' || k === 'openType') renderToolOptions(); });
   });
-  $$('[data-preset]', root).forEach(b => b.onclick = () => { if (b.dataset.preset === 'door') { S.openBot = 0; S.openTop = 2.1; } else { S.openBot = 0.9; S.openTop = 2.1; } renderToolOptions(); });
   $('#endChain', root)?.addEventListener('click', () => { S.flowCur = null; renderToolOptions(); scheduleRender(); });
 }
 
@@ -3141,15 +3266,16 @@ function heightPopover(anchor) {
     ${row('Vue hauteurs', chkIn('heightView', st.heightView))}
     ${row('Hauteur min', numIn('hMin', st.hMin, 'step="0.5"') + `<span class="u">${esc(S.doc.grid.unitName)}</span>`)}
     ${row('Hauteur max', numIn('hMax', st.hMax, 'step="0.5"') + `<button id="hAuto">Auto</button>`)}
+    ${row('Dégradé (iso)', chkIn('heightGrad', st.heightGrad) + '<span class="u">murs et volumes du bas vers le haut</span>')}
     ${row('Écart des étages (iso)', rangeIn('isoGap', st.isoGap, 0, 4, 0.1))}
     <div class="sub">Murs en vue isométrique</div>
     ${row('Affichage', selIn('wallMode', st.wallMode || 'cut', { full: 'Pleins', cut: 'Coupés face à moi', low: 'Abaissés' }))}
     ${row('Opacité des murs coupés', rangeIn('wallCutOp', st.wallCutOp ?? 0.2, 0, 1, 0.05))}
-    <p class="muted">Chaque objet a une <b>hauteur au sol</b> (panneau Propriétés), relative à son étage ; les murs ont en plus une <b>hauteur de mur</b>. La vue hauteurs colore les formes selon leur altitude, comme une heightmap. En iso, « Coupés face à moi » rend transparents les pans de mur tournés vers la caméra ; tourne la vue avec ⟲ ⟳ pour regarder sous un autre angle.</p></div>`, p => {
+    <p class="muted">Chaque objet a une <b>hauteur au sol</b> (panneau Propriétés), relative à son étage ; les murs ont en plus une <b>hauteur de mur</b>. La vue hauteurs colore chaque forme selon l’altitude de son <b>sommet</b> (pour un mur ou un volume : sol + hauteur du volume), comme une heightmap. En iso, « Coupés face à moi » rend transparents les pans de mur tournés vers la caméra ; tourne la vue avec ⟲ ⟳ pour regarder sous un autre angle.</p></div>`, p => {
       bindFields(p, () => [S.doc.settings], { noCommit: true, onApply: () => { markAllDirty(); updateTopBar(); scheduleAutosave(); } });
       $('#hAuto', p).onclick = () => {
         const hs = [];
-        for (const o of Object.values(S.doc.objects)) if (isClosed(o)) hs.push(floorAlt(layerById(o.layer)?.floor) + (o.elev || 0));
+        for (const o of Object.values(S.doc.objects)) if (isClosed(o) || isVolume(o)) { hs.push(objBaseAlt(o)); hs.push(objTopAlt(o)); }
         if (!hs.length) return;
         st.hMin = Math.min(...hs); st.hMax = Math.max(...hs); if (st.hMax === st.hMin) st.hMax = st.hMin + 1;
         closePopover(); markAllDirty(); scheduleRender(); heightPopover(anchor);
@@ -3195,13 +3321,15 @@ function refreshLayersPanel() {
   const list = d.layers.filter(L => L.floor === act || !L.floor).reverse();
   for (const L of list) {
     const cnt = L.items.filter(id => obj(id)?.kind !== 'link').length;
-    h += `<div class="lrow${L.id === S.activeLayer ? ' on' : ''}${L.visible ? '' : ' hid'}" data-lid="${L.id}" draggable="${S.mode === 'edit'}">
-      ${L.type === 'flow' ? `<span class="fsw" style="background:${L.color}"></span>` : ''}<span class="lt" title="${LAYER_TYPES[L.type].label}">${LAYER_TYPES[L.type].ico}</span>
-      <span class="ln" title="Double-clic pour renommer">${esc(L.name)}</span>${!L.floor ? '<span class="badge" title="Visible sur tous les étages">tous</span>' : ''}<span class="lc">${cnt || ''}</span>
+    const open = expandedLayers.has(L.id);
+    h += `<div class="lrow${L.id === S.activeLayer ? ' on' : ''}${L.visible ? '' : ' hid'}" data-lid="${L.id}">
+      <button class="lx" title="Afficher la liste des objets">${open ? '▾' : '▸'}</button>${L.type === 'flow' ? (S.mode === 'edit' ? `<input type="color" class="fswi" value="${hex6(L.color)}" title="Couleur du flow">` : `<span class="fsw" style="background:${L.color}"></span>`) : ''}<span class="lt" title="${LAYER_TYPES[L.type].label}">${LAYER_TYPES[L.type].ico}</span>
+      <span class="ln" draggable="${S.mode === 'edit'}" title="Glisser pour réordonner · double-clic pour renommer">${esc(L.name)}</span>${!L.floor ? '<span class="badge" title="Visible sur tous les étages">tous</span>' : ''}<span class="lc">${cnt || ''}</span>
       <input type="range" class="lo edit-only" min="0" max="1" step="0.05" value="${L.opacity}" title="Opacité ${Math.round(L.opacity * 100)} %">
       <button class="lv${L.visible ? '' : ' off'}" title="Visibilité">${L.visible ? EYE : EYE_OFF}</button>
       <button class="lk edit-only${L.locked ? '' : ' off'}" title="Verrouiller">${L.locked ? LOCK : UNLOCK}</button>
       <button class="ls edit-only" title="Réglages du calque">${GEAR}</button></div>`;
+    if (open) h += objListHTML(L.items.map(obj).filter(o => o && o.kind !== 'link').reverse(), 'lsub');
   }
   if (!list.length) h += `<p class="muted" style="padding:6px">Aucun calque sur cet étage.</p>`;
   h += `</div><div class="lbtns edit-only"><button id="layerAdd" data-pop>＋ Calque ▾</button><button id="layerDup" title="Dupliquer le calque actif">⧉</button><button id="layerDel" class="danger" title="Supprimer le calque actif">🗑</button></div>`;
@@ -3214,6 +3342,7 @@ function refreshLayersPanel() {
     $$('[data-lt]', p).forEach(b => b.onclick = () => { closePopover(); const L = makeLayer(b.dataset.lt); S.activeLayer = L.id; commit(); });
   });
   $('#layerDup', sec).onclick = duplicateLayer;
+  bindObjList(sec);
   $('#layerDel', sec).onclick = deleteLayer;
   $$('.lrow', sec).forEach(r => {
     const L = layerById(r.dataset.lid);
@@ -3223,7 +3352,9 @@ function refreshLayersPanel() {
     $('.lk', r).onclick = () => { L.locked = !L.locked; if (L.locked) S.sel = new Set([...S.sel].filter(id => obj(id)?.layer !== L.id)); commit(); };
     $('.ls', r).onclick = () => layerModal(L);
     const lo = $('.lo', r); lo.oninput = () => { L.opacity = parseFloat(lo.value); scheduleRender(); }; lo.onchange = () => commit({ keepLayers: true });
-    r.ondragstart = e => { e.dataTransfer.setData('text/x-layer', L.id); e.dataTransfer.effectAllowed = 'move'; };
+    const fc = $('.fswi', r); if (fc) { fc.oninput = () => { L.color = fc.value; stale.add(L.id); scheduleRender(); }; fc.onchange = () => commit(); }
+    $('.lx', r).onclick = () => { expandedLayers.has(L.id) ? expandedLayers.delete(L.id) : expandedLayers.add(L.id); refreshLayersPanel(); };
+    $('.ln', r).ondragstart = e => { e.dataTransfer.setData('text/x-layer', L.id); e.dataTransfer.effectAllowed = 'move'; };
     r.ondragover = e => { if (!e.dataTransfer.types.includes('text/x-layer')) return; e.preventDefault(); const top = e.offsetY < r.offsetHeight / 2; r.classList.toggle('dragover-top', top); r.classList.toggle('dragover-bot', !top); };
     r.ondragleave = () => r.classList.remove('dragover-top', 'dragover-bot');
     r.ondrop = e => {
@@ -3232,6 +3363,36 @@ function refreshLayersPanel() {
       const above = e.offsetY < r.offsetHeight / 2; const arr = S.doc.layers; const src = arr.findIndex(x => x.id === id); const [m] = arr.splice(src, 1);
       let ti = arr.findIndex(x => x.id === L.id); arr.splice(above ? ti + 1 : ti, 0, m); commit();
     };
+  });
+}
+/* Liste d'objets (sous un calque ou un type d'icône) */
+const expandedLayers = new Set(), expandedTypes = new Set();
+function objLabel(o) {
+  if (o.kind === 'bubble') { const L = layerById(o.layer), n = L ? L.order.indexOf(o.id) + 1 : '?'; return `${n}. ${o.title || o.name || 'Étape ' + n}`; }
+  if (o.kind === 'icon') return o.name || typeById(o.type)?.name || 'Icône';
+  if (o.kind === 'text') return o.name || String(o.text || '').split('\n')[0].slice(0, 40) || 'Texte';
+  if (o.kind === 'note') return o.name || String(o.text || '').slice(0, 40) || 'Note';
+  return o.name || KIND_LABEL[o.kind] || o.kind;
+}
+function objIco(o) {
+  if (o.kind === 'icon') return pictoSVG(typeById(o.type), 16);
+  if (o.kind === 'bubble') return `<span class="obub" style="background:${o.color || layerById(o.layer)?.color}"></span>`;
+  return `<span class="oki">${{ rect: '▭', ellipse: '◯', poly: '⬠', path: '∿', free: '〰', text: 'T', image: '▣', proc: '♣', wall: '▥', note: '✉' }[o.kind] || '•'}</span>`;
+}
+function objListHTML(objs, cls) {
+  if (!objs.length) return `<div class="${cls}"><p class="muted">Aucun objet</p></div>`;
+  return `<div class="${cls}">${objs.map(o => `<div class="oitem${S.sel.has(o.id) ? ' on' : ''}" data-item="${o.id}" title="Clic : sélectionner · double-clic : centrer la vue">${objIco(o)}<span class="on">${esc(objLabel(o))}</span>${o.url ? '<span class="ol" title="Lien vers un document">🔗</span>' : ''}<button data-go="${o.id}" title="Centrer la vue">◎</button></div>`).join('')}</div>`;
+}
+function bindObjList(root) {
+  $$('[data-item]', root).forEach(x => {
+    const o = obj(x.dataset.item); if (!o) return;
+    x.onclick = e => {
+      if (e.target.closest('[data-go]')) { centerOn(o); return; }
+      if (S.mode === 'read' || !canEdit(o)) { centerOn(o, true); if (hasInfo(o)) setTimeout(() => pinTip(o), 30); return; }
+      S.sel = new Set([o.id]); S.activeLayer = o.layer; S.vertexEdit = null;
+      refreshLayersPanel(); if (S.sideTab === 'props') renderTabBody(); else if (S.sideTab === 'icons') renderTabBody(); renderToolOptions(); scheduleRender();
+    };
+    x.ondblclick = () => centerOn(o);
   });
 }
 function setActiveFloor(fid) {
@@ -3386,6 +3547,7 @@ function renderPropsTab(b) {
   let h = `<div class="ph"><span class="pk">${KIND_LABEL[o.kind] || o.kind}${o.solid && isClosed(o) ? ' (volume)' : ''}</span><span class="pl">${esc(L?.name)}</span></div>`;
   if (!ro || o.kind === 'note') h += `<div class="acts"><button data-act="dup" title="Dupliquer (Ctrl+D)">⧉</button><button data-act="front" title="Premier plan (Maj+])">⤒</button><button data-act="up" title="Avancer (])">↑</button><button data-act="down" title="Reculer ([)">↓</button><button data-act="back" title="Arrière-plan (Maj+[)">⤓</button><button data-act="del" class="danger" title="Supprimer (Suppr)">🗑</button></div>`;
   const U = S.doc.grid.unitName;
+  if (!['bubble', 'icon', 'link'].includes(o.kind)) h += row('Nom', txtIn('name', o.name, KIND_LABEL[o.kind] || ''));
   switch (o.kind) {
     case 'rect': case 'ellipse':
       h += styleSection(o) + (o.kind === 'rect' ? row('Arrondi', numIn('style.rx', o.style.rx || 0, 'min="0" step="1"')) : '') + row('Rotation', numIn('rot', o.rot || 0, 'step="5"') + '<span class="u">°</span>') + heightRow(o) + solidRow(o);
@@ -3404,13 +3566,22 @@ function renderPropsTab(b) {
         + row('Placement', selIn('align', o.align || 'center', closed ? { inside: 'À l’intérieur du tracé', center: 'Centré sur le tracé', outside: 'À l’extérieur du tracé' } : { inside: 'D’un côté du tracé', center: 'Centré sur le tracé', outside: 'De l’autre côté' }))
         + row('Fermé', chkIn('closed', o.closed, 'data-rebuild')) + heightRow(o) + volumeSection(o);
       const Hm = o.wallH ?? 3, ops = (o.nodes || []).map((n, i) => [n.op, i]).filter(x => x[0]);
-      h += `<div class="sub">Ouvertures (${ops.length})</div>` + (ops.map(([op, i], k) => {
-        const [bot, top] = openingSpan(op, Hm), wid = W.segLen[i] ? fmtLen(W.segLen[i]) : '—';
-        return `<div class="opblock">` + row(`${bot > 0 ? 'Fenêtre' : 'Porte'} ${k + 1}`, `<span class="u">largeur ${wid}</span><button data-opset="${i}:door" title="Bas 0">Porte</button><button data-opset="${i}:window" title="Bas 0,90 m">Fenêtre</button><button data-opdel="${i}" class="danger" title="Reboucher">🗑</button>`)
-          + row('Bas', numIn(`nodes.${i}.op.bot`, rd(bot), 'min="0" step="0.1"') + `<span class="u">${esc(U)}</span>`)
-          + row('Haut', numIn(`nodes.${i}.op.top`, rd(top), 'min="0" step="0.1"') + `<span class="u">${esc(U)}${top >= Hm ? ' (toute la hauteur)' : ''}</span>`) + `</div>`;
-      }).join('') || '<p class="muted">Outil Ouverture (D) : clic sur le mur pour créer une ouverture entre deux nœuds.</p>')
-        + (ops.length ? '<p class="muted">La largeur se règle en déplaçant les deux nœuds orange de l’ouverture (outil Nœuds, A).</p>' : '');
+      const TL = { door: 'Porte', window: 'Fenêtre', gpe: 'GPE' };
+      h += `<div class="sub">Objets au mur (${ops.length})</div>` + (ops.map(([op, i], k) => {
+        const ty = opType(op), wid = W.segLen[i] ? fmtLen(W.segLen[i]) : '—', P = `nodes.${i}.op.`;
+        let r = row(`${TL[ty]} ${k + 1}`, selIn(P + 'type', ty, TL).replace('<select', '<select data-rebuild') + `<span class="u">${wid}</span><button data-opdel="${i}" class="danger" title="Retirer">🗑</button>`);
+        if (ty === 'gpe') {
+          r += row('Bas / haut', numIn(P + 'bot', op.bot ?? 0.8, 'min="0" step="0.1"') + numIn(P + 'top', op.top ?? 1.6, 'min="0" step="0.1"') + `<span class="u">${esc(U)}</span>`)
+            + row('Couleur', colorIn(P + 'fill', op.fill || '#e8742a') + '<span class="u">bordure</span>' + colorIn(P + 'stroke', op.stroke || '#ffffff') + numIn(P + 'sw', op.sw ?? 0, 'min="0" step="0.5"'))
+            + row('Visible', selIn(P + 'side', op.side || 'both', { both: 'Des deux côtés', in: 'Côté intérieur', out: 'Côté extérieur' }));
+        } else {
+          const [bot, top] = openingSpan(op, Hm);
+          if (ty === 'window') r += row('Bas', numIn(P + 'bot', rd(bot), 'min="0" step="0.1"') + `<span class="u">${esc(U)}</span>`);
+          r += row('Haut', numIn(P + 'top', rd(top), 'min="0" step="0.1"') + `<span class="u">${esc(U)}${top >= Hm ? ' (toute la hauteur)' : ''}</span>`);
+        }
+        return `<div class="opblock">${r}</div>`;
+      }).join('') || '<p class="muted">Outil Objet au mur (D) : clic sur le mur pour poser une porte, une fenêtre ou un GPE entre deux nœuds.</p>')
+        + (ops.length ? '<p class="muted">La largeur se règle en déplaçant les deux nœuds orange (outil Nœuds, A).</p>' : '');
       h += `<div class="kv"><span>Longueur (tracé)</span><b>${fmtLen(W.total)}</b></div>` + shapeTools(o);
       break;
     }
@@ -3434,20 +3605,26 @@ function renderPropsTab(b) {
       break;
     case 'bubble': {
       const n = L.order.indexOf(o.id) + 1;
-      const outs = Object.values(S.doc.objects).filter(l => l.kind === 'link' && (l.from === o.id || (l.both && l.to === o.id))).map(l => L.order.indexOf(l.from === o.id ? l.to : l.from) + 1).filter(x => x > 0);
-      const ins = Object.values(S.doc.objects).filter(l => l.kind === 'link' && (l.to === o.id || (l.both && l.from === o.id))).map(l => L.order.indexOf(l.to === o.id ? l.from : l.to) + 1).filter(x => x > 0);
-      h += `<div class="kv"><span>Numéro</span><b style="color:${o.color || L.color}">${n}</b></div><div class="kv"><span>Vient de</span><b>${ins.join(', ') || '—'}</b></div><div class="kv"><span>Mène à</span><b>${outs.join(', ') || '—'}</b></div>`
+      const links = Object.values(S.doc.objects).filter(l => l.kind === 'link' && l.layer === o.layer);
+      const outs = links.filter(l => l.from === o.id || (l.both && l.to === o.id));
+      const ins = links.filter(l => l.to === o.id || (l.both && l.from === o.id)).map(l => L.order.indexOf(l.to === o.id ? l.from : l.to) + 1).filter(x => x > 0);
+      const styOpts = Object.fromEntries(Object.entries(LINK_STYLES).map(([k, v]) => [k, v.label]));
+      const sel = (attr, v) => `<select ${attr}>${Object.entries(styOpts).map(([k, lab]) => `<option value="${k}"${k === v ? ' selected' : ''}>${esc(lab)}</option>`).join('')}</select>`;
+      h += row('Numéro', `<input type="number" id="bNum" min="1" max="${L.order.length}" step="1" value="${n}" style="width:64px"><span class="u">sur ${L.order.length}</span>`)
+        + `<div class="kv"><span>Vient de</span><b>${ins.join(', ') || '—'}</b></div>`
+        + `<div class="sub">Mène à</div>` + (outs.map(l => { const t = l.from === o.id ? l.to : l.from; return `<div class="outrow"><span class="u">→</span><input type="number" min="1" max="${L.order.length}" data-lto="${l.id}" value="${L.order.indexOf(t) + 1}" title="Numéro de la bulle d’arrivée">${sel(`data-lsty="${l.id}"`, l.style)}<label class="u" title="Double sens"><input type="checkbox" data-lboth="${l.id}" ${l.both ? 'checked' : ''}>⇄</label><button data-ldel="${l.id}" class="danger" title="Supprimer ce lien">🗑</button></div>`; }).join('') || '<p class="muted">Aucune sortie.</p>')
+        + `<div class="outrow"><span class="u">＋</span><input type="number" min="1" max="${L.order.length}" id="addOutNum" placeholder="n°">${sel('id="addOutSty"', S.linkStyle)}<button id="addOut">Ajouter</button></div>`
         + row('Titre', txtIn('title', o.title, 'Ex. : Arrivée au village'), 'col') + row('Description', areaIn('desc', o.desc, 'Texte affiché dans l’info-bulle pour les lecteurs', 5), 'col')
         + row('Couleur', colorIn('color', o.color || L.color) + `<button id="colReset">Couleur du calque</button>`) + heightRow(o)
         + `<div class="btnrow"><button id="chainHere">Repartir de cette bulle</button></div>`;
       break;
     }
     case 'link': {
-      const a = obj(o.from), c = obj(o.to); const pts = [[a.x, a.y], ...(o.wps || []), [c.x, c.y]];
+      const pts = linkWorldPts(o) || [];
       h += `<div class="kv"><span>De → vers</span><b>${L.order.indexOf(o.from) + 1} → ${L.order.indexOf(o.to) + 1}</b></div><div class="kv"><span>Longueur</span><b>${fmtLen(polyLen(pts))}</b></div>`
         + row('Type', selIn('style', o.style, Object.fromEntries(Object.entries(LINK_STYLES).map(([k, v]) => [k, v.label])))) + row('Double sens', chkIn('both', o.both))
         + row('Étiquette', txtIn('label', o.label, 'Ex. : clé rouge')) + row('Couleur', colorIn('color', linkColor(o)) + `<button id="colReset">Par défaut</button>`)
-        + `<div class="btnrow"><button id="lnkRev">Inverser le sens</button><button id="lnkWp" ${o.wps?.length ? '' : 'disabled'}>Effacer les points de passage</button></div><p class="muted">Double-clic sur le lien : ajouter un point de passage · Alt+clic sur un point : le supprimer.</p>`;
+        + `<div class="btnrow"><button id="lnkRev">Inverser le sens</button><button id="lnkWp" ${o.wps?.length || o.ctrl ? '' : 'disabled'}>Réinitialiser la forme</button></div><p class="muted">Glisse les deux poignées rondes pour courber le lien (Bézier) · double-clic sur le lien : point de passage · Alt+clic sur un point : le supprimer.</p>`;
       break;
     }
     case 'icon': {
@@ -3462,6 +3639,11 @@ function renderPropsTab(b) {
         + row('Couleur', `<div class="swatches">${['#ffe27a', '#ffb3a7', '#b9f3c2', '#b8dcff', '#e3c7ff'].map(c => `<button data-sw="${c}" style="background:${c}"></button>`).join('')}</div>`)
         + row('Repliée', chkIn('collapsed', o.collapsed)) + heightRow(o) + (o.author ? `<div class="kv"><span>Auteur</span><b>${esc(o.author)}</b></div>` : '');
       break;
+  }
+  if (o.kind !== 'link') {
+    const u = safeUrl(o.url);
+    h += `<div class="sub">Document lié</div>` + row('Lien', txtIn('url', o.url, 'https://… (Drive, doc, wiki…)') + (u ? `<a class="btnlink" href="${esc(u)}" target="_blank" rel="noopener noreferrer" title="Ouvrir le document">↗</a>` : ''))
+      + row('Libellé', txtIn('urlLabel', o.urlLabel, 'Ouvrir le document'));
   }
   b.innerHTML = h;
   if (ro && o.kind !== 'note') { $$('input,select,textarea,button', b).forEach(el => el.disabled = true); return; }
@@ -3479,18 +3661,45 @@ function renderPropsTab(b) {
   $('#mkWalls', b)?.addEventListener('click', () => wallsFromShape(o));
   $('#toDoor', b)?.addEventListener('click', () => setTool('door'));
   $$('[data-opdel]', b).forEach(x => x.onclick = () => { delete o.nodes[+x.dataset.opdel].op; markObj(o); commit(); });
-  $$('[data-opset]', b).forEach(x => x.onclick = () => { const [i, kind] = x.dataset.opset.split(':'); const op = o.nodes[+i].op; op.bot = kind === 'door' ? 0 : 0.9; if (!isNum(op.top)) op.top = 2.1; markObj(o); commit(); });
+  $$('select[data-k$=".op.type"]', b).forEach(x => x.addEventListener('change', () => {
+    const op = o.nodes[+x.dataset.k.split('.')[1]]?.op; if (!op) return;
+    if (op.type === 'door') op.bot = 0; else if (op.type === 'window') { if (!(op.bot > 0)) op.bot = 0.9; if (!isNum(op.top)) op.top = 2.1; }
+    else if (op.type === 'gpe') Object.assign(op, { bot: S.gpe.bot, top: S.gpe.top, fill: op.fill || S.gpe.fill, stroke: op.stroke || S.gpe.stroke, sw: op.sw ?? S.gpe.sw, side: op.side || S.gpe.side });
+    markObj(o); commit();
+  }));
   $('#genType', b)?.addEventListener('change', e => { const g = GENS[e.target.value]; Object.assign(o.gen, { type: e.target.value, c: g.c, bg: g.bg }); o.style.stroke = shade(g.bg, -0.35); S.procGen = deep(o.gen); markObj(o); commit(); });
   $('#reseed', b)?.addEventListener('click', () => { o.gen.seed = Math.floor(Math.random() * 9999); markObj(o); commit(); });
   $('#colReset', b)?.addEventListener('click', () => { delete o.color; markObj(o); commit(); });
   $('#chainHere', b)?.addEventListener('click', () => { S.flowCur = o.id; setTool('flow'); S.flowCur = o.id; scheduleRender(); renderToolOptions(); });
   $('#lnkRev', b)?.addEventListener('click', () => { [o.from, o.to] = [o.to, o.from]; o.wps = (o.wps || []).reverse(); commit(); });
-  $('#lnkWp', b)?.addEventListener('click', () => { o.wps = []; commit(); });
+  $('#lnkWp', b)?.addEventListener('click', () => { o.wps = []; delete o.ctrl; commit(); });
+  if (o.kind === 'bubble') bindBubbleFlow(o, L, b);
   $('#imgNat', b)?.addEventListener('click', async () => { const s = await imgSize(S.doc.assets[o.asset]); o.w = s.w; o.h = s.h; commit(); });
   $('#imgRep', b)?.addEventListener('click', () => pickFile('#fileAny', async f => { const d = await readFileAsDataURL(f); o.asset = addAsset(d); const s = await imgSize(d); o.h = f1(o.w * s.h / s.w); commit(); }));
   $('#icImg', b)?.addEventListener('click', () => pickFile('#fileAny', async f => { o.img = addAsset(await readFileAsDataURL(f)); commit(); }));
   $('#icImgDel', b)?.addEventListener('click', () => { delete o.img; commit(); });
   $$('[data-sw]', b).forEach(x => x.onclick = () => { o.color = x.dataset.sw; commit({ keepPanel: true }); });
+}
+function bindBubbleFlow(o, L, b) {
+  const byNum = n => L.order[(parseInt(n, 10) || 0) - 1];
+  $('#bNum', b)?.addEventListener('change', e => {
+    const n = clamp(parseInt(e.target.value, 10) || 1, 1, L.order.length);
+    L.order = L.order.filter(x => x !== o.id); L.order.splice(n - 1, 0, o.id); commit(); toast('Numérotation mise à jour');
+  });
+  $$('[data-lto]', b).forEach(x => x.onchange = () => {
+    const l = obj(x.dataset.lto), t = byNum(x.value);
+    if (!t || t === o.id) { toast('Numéro de bulle invalide'); renderTabBody(); return; }
+    if (l.from === o.id) l.to = t; else l.from = t;
+    l.wps = []; delete l.ctrl; commit();
+  });
+  $$('[data-lsty]', b).forEach(x => x.onchange = () => { obj(x.dataset.lsty).style = x.value; commit(); });
+  $$('[data-lboth]', b).forEach(x => x.onchange = () => { obj(x.dataset.lboth).both = x.checked; commit(); });
+  $$('[data-ldel]', b).forEach(x => x.onclick = () => { removeObject(x.dataset.ldel); commit(); });
+  $('#addOut', b)?.addEventListener('click', () => {
+    const t = byNum($('#addOutNum', b).value);
+    if (!t || t === o.id) { toast('Indique le numéro de la bulle d’arrivée'); return; }
+    const keep = S.linkStyle; S.linkStyle = $('#addOutSty', b).value; const l = addLink(o.id, t, o.layer); if (l) l.style = S.linkStyle; S.linkStyle = keep; commit();
+  });
 }
 function bindActs(b) {
   $$('[data-act]', b).forEach(x => x.onclick = () => ({ dup: duplicateSel, del: deleteSel, front: () => zorder('front'), back: () => zorder('back'), up: () => zorder('up'), down: () => zorder('down') })[x.dataset.act]());
@@ -3516,7 +3725,9 @@ function renderIconsTab(b) {
     h += `<div class="icat"><div class="ich" data-cat="${c.id}"><span class="dot" style="background:${c.color}"></span>${esc(c.name)}<span class="ic">${tot || ''}</span><button data-eyecat="${c.id}" title="Afficher / masquer la catégorie">${hidC ? EYE_OFF : EYE}</button><span class="muted">${fold ? '▸' : '▾'}</span></div>`;
     if (!fold) for (const t of types) {
       const hid = hidC || S.hiddenTypes.has(t.id);
-      h += `<div class="irow${S.stampType === t.id && S.tool === 'icon' ? ' on' : ''}${hid ? ' hid' : ''}" data-type="${t.id}" title="${S.mode === 'edit' ? 'Clic : poser cette icône' : ''}">${pictoSVG(t, 24)}<span>${esc(t.name)}</span><span class="ic">${cnt.get(t.id) || ''}</span><button data-eyetype="${t.id}">${S.hiddenTypes.has(t.id) ? EYE_OFF : EYE}</button></div>`;
+      const n = cnt.get(t.id) || 0, ex = expandedTypes.has(t.id);
+      h += `<div class="irow${S.stampType === t.id && S.tool === 'icon' ? ' on' : ''}${hid ? ' hid' : ''}" data-type="${t.id}" title="${S.mode === 'edit' ? 'Clic : poser cette icône' : ''}">${pictoSVG(t, 24)}<span>${esc(t.name)}</span><span class="ic">${n || ''}</span>${n ? `<button data-extype="${t.id}" title="Liste des icônes posées">${ex ? '▾' : '▸'}</button>` : '<span style="width:17px"></span>'}<button data-eyetype="${t.id}">${S.hiddenTypes.has(t.id) ? EYE_OFF : EYE}</button></div>`;
+      if (ex && n) h += objListHTML(S.doc.layers.filter(L => L.type === 'icons' && layerDisplay(L).show).flatMap(L => L.items.map(obj)).filter(o => o && o.type === t.id), 'isub');
     }
     h += `</div>`;
   }
@@ -3529,6 +3740,8 @@ function renderIconsTab(b) {
   $$('[data-cat]', b).forEach(x => x.onclick = e => { if (e.target.closest('button')) return; const id = x.dataset.cat; foldedCats.has(id) ? foldedCats.delete(id) : foldedCats.add(id); renderIconsTab(b); });
   $$('[data-eyecat]', b).forEach(x => x.onclick = () => { const id = x.dataset.eyecat; S.hiddenCats.has(id) ? S.hiddenCats.delete(id) : S.hiddenCats.add(id); renderIconsTab(b); scheduleRender(); });
   $$('[data-eyetype]', b).forEach(x => x.onclick = e => { e.stopPropagation(); const id = x.dataset.eyetype; S.hiddenTypes.has(id) ? S.hiddenTypes.delete(id) : S.hiddenTypes.add(id); renderIconsTab(b); scheduleRender(); });
+  $$('[data-extype]', b).forEach(x => x.onclick = e => { e.stopPropagation(); const id = x.dataset.extype; expandedTypes.has(id) ? expandedTypes.delete(id) : expandedTypes.add(id); renderIconsTab(b); });
+  bindObjList(b);
   $$('.irow', b).forEach(x => x.onclick = e => { if (e.target.closest('button') || S.mode !== 'edit') return; S.stampType = x.dataset.type; if (S.tool !== 'icon') setTool('icon'); else renderToolOptions(); renderIconsTab(b); });
   $('#libEdit', b)?.addEventListener('click', libraryModal);
 }
@@ -3547,7 +3760,7 @@ function renderFlowTab(b) {
   const links = L.items.map(obj).filter(o => o?.kind === 'link');
   const lenBy = {}; for (const l of links) { const a = obj(l.from), c = obj(l.to); if (!a || !c) continue; lenBy[l.style] = (lenBy[l.style] || 0) + polyLen([[a.x, a.y], ...(l.wps || []), [c.x, c.y]]); }
   const num = new Map(L.order.map((id, i) => [id, i + 1]));
-  let h = `<div class="row"><label>Flow</label><div class="ctl"><select id="flowSel">${flows.map(f => `<option value="${f.id}"${f.id === L.id ? ' selected' : ''}>${esc(f.name)} — ${esc(floorById(f.floor)?.name || 'tous')}</option>`).join('')}</select><button id="newFlow" class="edit-only" title="Nouveau flow">＋</button></div></div>
+  let h = `<div class="row"><label>Flow</label><div class="ctl"><select id="flowSel">${flows.map(f => `<option value="${f.id}"${f.id === L.id ? ' selected' : ''}>${esc(f.name)} — ${esc(floorById(f.floor)?.name || 'tous')}</option>`).join('')}</select><input type="color" id="flowCol" class="edit-only" value="${hex6(L.color)}" title="Couleur de ce flow"><button id="newFlow" class="edit-only" title="Nouveau flow">＋</button></div></div>
     <div class="kv"><span>Bulles · liens</span><b>${L.order.length} · ${links.length}</b></div>
     ${Object.entries(lenBy).map(([k, v]) => `<div class="kv"><span>${LINK_STYLES[k]?.label || k}</span><b>${fmtLen(v)}</b></div>`).join('')}
     <div class="sub">Script du niveau</div>`;
@@ -3564,6 +3777,7 @@ function renderFlowTab(b) {
   b.innerHTML = h;
   $('#flowSel', b).onchange = e => { flowTabLayer = e.target.value; S.activeLayer = flowTabLayer; S.sel.clear(); refreshLayersPanel(); renderFlowTab(b); scheduleRender(); };
   $('#newFlow', b)?.addEventListener('click', () => { const N = makeLayer('flow'); S.activeLayer = N.id; flowTabLayer = N.id; commit(); setTool('flow'); });
+  const fcol = $('#flowCol', b); if (fcol) { fcol.oninput = () => { L.color = fcol.value; stale.add(L.id); scheduleRender(); }; fcol.onchange = () => commit({ keepPanel: true }); }
   $$('[data-k][data-oid]', b).forEach(el => {
     const o = obj(el.dataset.oid);
     el.oninput = () => { o[el.dataset.k] = el.value; markObj(o); scheduleRender(); };
@@ -3580,9 +3794,12 @@ function renderFlowTab(b) {
   $('#renum', b)?.addEventListener('click', () => { renumberByPath(L); commit(); toast('Bulles renumérotées selon le parcours'); });
   $('#script', b).onclick = () => exportScript(L);
 }
-function centerOn(o) {
-  if (!o) return; const p = W2S(o.x ?? o.cx, o.y ?? o.cy, objLift(o));
-  S.view.x += S.vw / 2 - p[0]; S.view.y += S.vh / 2 - p[1]; S.sel = new Set([o.id]); scheduleRender(); refreshProps();
+function centerOn(o, noSelect) {
+  if (!o) return; const [a, b, c, d] = bboxOf(objWorldCorners(o)); const p = W2S((a + c) / 2, (b + d) / 2, objLift(o));
+  if (o.layer && layerById(o.layer)?.floor && layerById(o.layer).floor !== S.doc.settings.activeFloor) setActiveFloor(layerById(o.layer).floor);
+  S.view.x += S.vw / 2 - p[0]; S.view.y += S.vh / 2 - p[1];
+  if (!noSelect && S.mode === 'edit') S.sel = new Set([o.id]);
+  scheduleRender(); refreshProps();
 }
 function renumberByPath(L) {
   const bs = L.order.slice(); if (!bs.length) return;
@@ -3897,7 +4114,16 @@ function selectAll() {
 
 /* ===== Info-bulles ===== */
 let tipT = null, tipFor = null, tipPinned = null;
-function tipHTML(o) {
+function safeUrl(u) {
+  u = String(u || '').trim(); if (!u) return '';
+  if (/^(https?:|mailto:)/i.test(u)) return u;
+  if (/^[\w.-]+\.[a-z]{2,}(\/|$)/i.test(u)) return 'https://' + u;
+  return '';
+}
+function tipLink(o) { const u = safeUrl(o.url); return u ? `<a class="tl" href="${esc(u)}" target="_blank" rel="noopener noreferrer">🔗 ${esc(o.urlLabel || 'Ouvrir le document')}</a>` : ''; }
+function tipHTML(o) { return tipBody(o) + tipLink(o); }
+function tipBody(o) {
+  if (o.kind !== 'bubble' && o.kind !== 'icon') return `<div class="th">${objIco(o)}<span>${esc(objLabel(o))}</span></div>${o.desc ? `<div class="td">${esc(o.desc)}</div>` : ''}`;
   if (o.kind === 'bubble') {
     const L = layerById(o.layer), n = L.order.indexOf(o.id) + 1;
     return `<div class="th"><span class="tn" style="background:${o.color || L.color}">${n}</span>${esc(o.title || 'Étape ' + n)}</div>${o.desc ? `<div class="td">${esc(o.desc)}</div>` : ''}`;
