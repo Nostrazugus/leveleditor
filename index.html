@@ -17,7 +17,7 @@ button.primary{background:var(--accent2);border-color:var(--accent)}
 button.primary:hover{background:var(--accent)}
 button.danger:hover{background:var(--danger);border-color:var(--danger)}
 button.ib{width:30px;padding:4px 0;text-align:center;font-size:15px}
-input[type=text],input[type=number],input:not([type]),select,textarea{background:#181b20;border:1px solid var(--line);border-radius:5px;padding:4px 6px;min-width:0}
+input[type=text],input[type=number],input[type=email],input[type=password],input:not([type]),select,textarea{background:#181b20;border:1px solid var(--line);border-radius:5px;padding:4px 6px;min-width:0}
 input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent)}
 textarea{resize:vertical;width:100%}
 input[type=color]{width:30px;height:26px;padding:1px;border:1px solid var(--line);border-radius:5px;background:#181b20;cursor:pointer;flex:none}
@@ -102,7 +102,7 @@ body.m-read #stage .bub,body.m-read #stage .ico{cursor:help}
 .row{display:flex;align-items:center;gap:8px;margin:6px 0}
 .row>label{width:84px;flex:none;color:var(--muted);font-size:12px}
 .row .ctl{flex:1;display:flex;align-items:center;gap:5px;min-width:0}
-.row .ctl>input[type=text],.row .ctl>select,.row .ctl>input:not([type]){flex:1}
+.row .ctl>input[type=text],.row .ctl>input[type=email],.row .ctl>input[type=password],.row .ctl>select,.row .ctl>input:not([type]){flex:1}
 .row .ctl>input[type=number]{width:70px}
 .row .ctl>input[type=range]{flex:1}
 .row.col{flex-direction:column;align-items:stretch}
@@ -221,7 +221,7 @@ code{background:var(--panel3);border-radius:4px;padding:0 4px;font-size:12px}
     <button id="bUndo" class="ib edit-only" title="Annuler (Ctrl+Z)">↶</button>
     <button id="bRedo" class="ib edit-only" title="Rétablir (Ctrl+Maj+Z)">↷</button>
     <span class="sep"></span>
-    <div class="seg" id="viewSeg" title="Projection"><button data-v="top">Dessus</button><button data-v="iso">Isométrique</button></div>
+    <div class="seg" id="viewSeg" title="Projection"><button data-v="top">Dessus</button><button data-v="iso">Isométrique</button></div><button class="ib isorot" data-r="-90" title="Tourner la vue iso">⟲</button><button class="ib isorot" data-r="90" title="Tourner la vue iso">⟳</button>
     <button id="bGrid" data-pop class="edit-only">Grille ▾</button>
     <button id="bHeight" data-pop>Hauteurs ▾</button>
     <button id="bLegend">Légende</button>
@@ -398,13 +398,22 @@ function defaultLibrary() {
   const types = [
     T('ennemi', 'ennemis', 'Ennemi', 'crane'), T('elite', 'ennemis', 'Élite', 'epee'), T('boss', 'ennemis', 'Boss', 'couronne'),
     T('coffre', 'objets', 'Coffre', 'coffre'), T('cle', 'objets', 'Clé', 'cle'), T('soin', 'objets', 'Soin', 'coeur'), T('munitions', 'objets', 'Munitions', 'munitions'), T('collectible', 'objets', 'Collectible', 'etoile'), T('tresor', 'objets', 'Trésor', 'gemme'),
-    T('sauvegarde', 'navigation', 'Sauvegarde', 'feu'), T('porte', 'navigation', 'Porte', 'porte'), T('porte_v', 'navigation', 'Porte verrouillée', 'cadenas'), T('escalier', 'navigation', 'Escalier', 'escalier'), T('echelle', 'navigation', 'Échelle', 'echelle'), T('teleporteur', 'navigation', 'Téléporteur', 'portail'),
+    T('apparition', 'navigation', 'Point d’apparition', 'drapeau'), T('sauvegarde', 'navigation', 'Sauvegarde', 'feu'), T('porte', 'navigation', 'Porte', 'porte'), T('porte_v', 'navigation', 'Porte verrouillée', 'cadenas'), T('escalier', 'navigation', 'Escalier', 'escalier'), T('echelle', 'navigation', 'Échelle', 'echelle'), T('teleporteur', 'navigation', 'Téléporteur', 'portail'),
     T('pnj', 'pnj', 'PNJ', 'pnj'), T('marchand', 'pnj', 'Marchand', 'sac'), T('quete', 'pnj', 'Quête', 'exclamation'), T('dialogue', 'pnj', 'Dialogue', 'dialogue'),
     T('secret', 'secrets', 'Secret', 'question'), T('vue', 'secrets', 'Point de vue', 'oeil'),
     T('piege', 'dangers', 'Piège', 'piege'), T('explosif', 'dangers', 'Explosif', 'bombe'),
     T('levier', 'gameplay', 'Levier', 'levier'), T('objectif', 'gameplay', 'Objectif', 'cible'), T('cinematique', 'gameplay', 'Cinématique', 'camera'),
   ];
-  return { cats, types };
+  return { v: 2, cats, types };
+}
+/* Ajoute aux bibliothèques existantes les icônes apparues dans les nouvelles versions */
+function upgradeLibrary(lib) {
+  if (!lib || (lib.v || 1) >= 2) return;
+  if (lib.cats.find(c => c.id === 'navigation') && !lib.types.find(t => t.id === 'apparition')) {
+    const i = lib.types.findIndex(t => t.cat === 'navigation');
+    lib.types.splice(i < 0 ? lib.types.length : i, 0, { id: 'apparition', cat: 'navigation', name: 'Point d’apparition', picto: { kind: 'builtin', value: 'drapeau' } });
+  }
+  lib.v = 2;
 }
 
 /* ===== Document ===== */
@@ -419,7 +428,7 @@ function newDoc(lib) {
     objects: {}, assets: {},
     library: lib ? deep(lib) : defaultLibrary(),
     legend: { show: false, title: 'Légende', pos: 'br', hidden: {}, labels: {}, extra: [] },
-    settings: { view: 'top', floorMode: 'all', activeFloor: f0.id, isoGap: 1, heightView: false, hMin: 0, hMax: 10 },
+    settings: { view: 'top', floorMode: 'all', activeFloor: f0.id, isoGap: 1, heightView: false, hMin: 0, hMax: 10, isoRot: 0, wallMode: 'cut', wallCutOp: 0.2 },
   };
 }
 function migrate(d) {
@@ -452,10 +461,10 @@ const S = {
   draft: null, drag: null, marquee: null, measure: null, cursorS: null,
   spaceDown: false, altDown: false, shiftDown: false, exporting: false,
   hiddenTypes: new Set(), hiddenCats: new Set(), showLabels: false,
-  toolStyle: { stroke: '#3a3f47', sw: 2, fill: '#d5dce6', fillMode: 'solid', dash: 'solid', opacity: 1 },
+  toolStyle: { stroke: '#3a3f47', sw: 2, fill: '#d5dce6', fillMode: 'solid', dash: 'solid', opacity: 1, patScale: 2 },
   wallStyle: { stroke: '#2b2f36', sw: 8, fill: '#d5dce6', fillMode: 'none', dash: 'solid', opacity: 1, join: 'miter', cap: 'square' },
   procGen: { type: 'foret', density: 1, scale: 1, seed: 1, c: GENS.foret.c, bg: GENS.foret.bg },
-  linkStyle: 'critique', textSize: 20,
+  linkStyle: 'critique', textSize: 20, wallH: 3,
   fileHandle: null, clipboard: null, user: '',
   sideTab: 'props',
 };
@@ -517,13 +526,22 @@ function renderOrder() {
 }
 
 /* ===== Projection & vue ===== */
-function proj(x, y) { return isIso() ? [C45 * (x - y), 0.5 * C45 * (x + y)] : [x, y]; }
-function unproj(x, y) { if (!isIso()) return [x, y]; const a = x / C45, b = 2 * y / C45; return [(a + b) / 2, (b - a) / 2]; }
+/* Vue iso : rotation par pas de 90° (pour regarder la carte sous un autre angle), puis projection 2:1 */
+function isoMatrix() {
+  const r = ((S.doc.settings.isoRot || 0) % 360) * Math.PI / 180, cs = Math.round(Math.cos(r)), sn = Math.round(Math.sin(r));
+  // M = Iso · Rot ; Iso = [[c,-c],[c/2,c/2]] ; Rot = [[cs,-sn],[sn,cs]]
+  return [C45 * (cs - sn), C45 * (-sn - cs), 0.5 * C45 * (cs + sn), 0.5 * C45 * (cs - sn)]; // [m00, m01, m10, m11]
+}
+function proj(x, y) { if (!isIso()) return [x, y]; const m = isoMatrix(); return [m[0] * x + m[1] * y, m[2] * x + m[3] * y]; }
+function unproj(x, y) {
+  if (!isIso()) return [x, y]; const m = isoMatrix(), det = m[0] * m[3] - m[1] * m[2];
+  return [(m[3] * x - m[1] * y) / det, (-m[2] * x + m[0] * y) / det];
+}
 function W2S(x, y, lift = 0) { const [px, py] = proj(x, y); return [S.view.x + S.view.z * px, S.view.y + S.view.z * (py - lift)]; }
 function S2W(sx, sy, lift = 0) { return unproj((sx - S.view.x) / S.view.z, (sy - S.view.y) / S.view.z + lift); }
 function worldTransform(lift = 0) {
   const v = S.view; let t = `translate(${rd(v.x)},${rd(v.y)}) scale(${v.z})`;
-  if (isIso()) t += ` translate(0,${rd(-lift)}) matrix(${C45},${0.5 * C45},${-C45},${0.5 * C45},0,0)`;
+  if (isIso()) { const m = isoMatrix(); t += ` translate(0,${rd(-lift)}) matrix(${m[0]},${m[2]},${m[1]},${m[3]},0,0)`; }
   return t;
 }
 function liftOfAlt(alt) { return isIso() ? alt * ppu() * S.doc.settings.isoGap : 0; }
@@ -590,6 +608,121 @@ function rotPt(p, c, deg) {
   const dx = p[0] - c[0], dy = p[1] - c[1];
   return [c[0] + dx * cs - dy * sn, c[1] + dx * sn + dy * cs];
 }
+/* ===== Nœuds de Bézier ===== */
+const NODE_KINDS = new Set(['rect', 'ellipse', 'poly', 'path', 'free', 'proc']);
+const cornerNode = p => ({ x: p[0], y: p[1], ix: p[0], iy: p[1], ox: p[0], oy: p[1] });
+function smoothNodesFrom(pts, closed) {
+  const n = pts.length;
+  return pts.map((p, i) => {
+    const a = closed ? pts[(i - 1 + n) % n] : pts[Math.max(0, i - 1)], b = closed ? pts[(i + 1) % n] : pts[Math.min(n - 1, i + 1)];
+    const dx = (b[0] - a[0]) / 6, dy = (b[1] - a[1]) / 6;
+    return { x: p[0], y: p[1], ix: p[0] - dx, iy: p[1] - dy, ox: p[0] + dx, oy: p[1] + dy };
+  });
+}
+/* Nœuds équivalents à n'importe quelle forme (sans la modifier) */
+function shapeNodes(o) {
+  if (o.nodes) return o.nodes;
+  if (o.kind === 'rect') { const c = [o.cx, o.cy]; return [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([a, b]) => cornerNode(rotPt([o.cx + a * o.w / 2, o.cy + b * o.h / 2], c, o.rot))); }
+  if (o.kind === 'ellipse') {
+    const k = 0.5523, rx = o.w / 2, ry = o.h / 2, c = [o.cx, o.cy], R = p => rotPt(p, c, o.rot);
+    return [[0, -1], [1, 0], [0, 1], [-1, 0]].map(([a, b]) => {
+      const p = R([o.cx + a * rx, o.cy + b * ry]);
+      const t = [-b * rx * k, a * ry * k]; // tangente (sens horaire)
+      const i = R([o.cx + a * rx - t[0], o.cy + b * ry - t[1]]), q = R([o.cx + a * rx + t[0], o.cy + b * ry + t[1]]);
+      return { x: p[0], y: p[1], ix: i[0], iy: i[1], ox: q[0], oy: q[1] };
+    });
+  }
+  if (o.kind === 'free') return smoothNodesFrom(o.pts, o.closed);
+  if (o.pts) return o.pts.map(cornerNode);
+  return [];
+}
+function nodesClosed(o) { return o.kind === 'rect' || o.kind === 'ellipse' || o.kind === 'proc' || !!o.closed; }
+/* Convertit la forme en nœuds éditables (en place, même identifiant) */
+function ensureNodes(o) {
+  if (o.nodes) return o;
+  const nodes = deep(shapeNodes(o)).map(n => { for (const k in n) n[k] = f1(n[k]); return n; });
+  const closed = nodesClosed(o);
+  if (o.kind === 'proc') { delete o.pts; o.nodes = nodes; return o; }
+  delete o.pts; delete o.cx; delete o.cy; delete o.w; delete o.h; delete o.rot;
+  if (o.style) delete o.style.rx;
+  o.kind = 'path'; o.nodes = nodes; o.closed = closed;
+  return o;
+}
+function cubicAt(a, b, t) {
+  const u = 1 - t;
+  return [u * u * u * a.x + 3 * u * u * t * a.ox + 3 * u * t * t * b.ix + t * t * t * b.x, u * u * u * a.y + 3 * u * u * t * a.oy + 3 * u * t * t * b.iy + t * t * t * b.y];
+}
+function flattenNodes(nodes, closed, steps = 10) {
+  const out = []; const n = nodes.length; if (!n) return out;
+  const segs = closed ? n : n - 1;
+  out.push([nodes[0].x, nodes[0].y]);
+  for (let i = 0; i < segs; i++) {
+    const a = nodes[i], b = nodes[(i + 1) % n];
+    const straight = a.ox === a.x && a.oy === a.y && b.ix === b.x && b.iy === b.y;
+    if (straight) out.push([b.x, b.y]); else for (let k = 1; k <= steps; k++) out.push(cubicAt(a, b, k / steps));
+  }
+  if (closed && out.length > 1) out.pop();
+  return out;
+}
+/* Contour de la forme en points (courbes aplaties) */
+function geomPts(o) {
+  if (o.nodes) return flattenNodes(o.nodes, nodesClosed(o));
+  if (o.kind === 'rect') return shapeNodes(o).map(n => [n.x, n.y]);
+  if (o.kind === 'ellipse' || o.kind === 'free') return flattenNodes(shapeNodes(o), nodesClosed(o));
+  return o.pts || [];
+}
+/* Point de la courbe le plus proche (en écran) : segment i, paramètre t */
+function nearestOnNodes(nodes, closed, sp, toScreen) {
+  const n = nodes.length, segs = closed ? n : n - 1; let best = { d: Infinity, i: -1, t: 0 };
+  for (let i = 0; i < segs; i++) {
+    const a = nodes[i], b = nodes[(i + 1) % n];
+    let prev = toScreen([a.x, a.y]);
+    for (let k = 1; k <= 24; k++) {
+      const p = toScreen(cubicAt(a, b, k / 24)); const r = segDist(sp, prev, p);
+      if (r.d < best.d) best = { d: r.d, i, t: (k - 1 + r.t) / 24 };
+      prev = p;
+    }
+  }
+  return best;
+}
+/* Ajoute un nœud sur la courbe sans la déformer (de Casteljau) */
+function splitNodes(nodes, i, t) {
+  const n = nodes.length, a = nodes[i], b = nodes[(i + 1) % n];
+  if (a.ox === a.x && a.oy === a.y && b.ix === b.x && b.iy === b.y) { // segment droit : nouveau nœud d'angle
+    nodes.splice(i + 1, 0, cornerNode([a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t])); return i + 1;
+  }
+  const L = (p, q) => [p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t];
+  const P0 = [a.x, a.y], P1 = [a.ox, a.oy], P2 = [b.ix, b.iy], P3 = [b.x, b.y];
+  const P01 = L(P0, P1), P12 = L(P1, P2), P23 = L(P2, P3), P012 = L(P01, P12), P123 = L(P12, P23), M = L(P012, P123);
+  a.ox = P01[0]; a.oy = P01[1]; b.ix = P23[0]; b.iy = P23[1];
+  const nn = { x: M[0], y: M[1], ix: P012[0], iy: P012[1], ox: P123[0], oy: P123[1] };
+  nodes.splice(i + 1, 0, nn);
+  return i + 1;
+}
+function toggleSmooth(nodes, i, closed) {
+  const n = nodes.length, p = nodes[i];
+  const isCorner = Math.hypot(p.ix - p.x, p.iy - p.y) < 0.01 && Math.hypot(p.ox - p.x, p.oy - p.y) < 0.01;
+  if (!isCorner) { p.ix = p.ox = p.x; p.iy = p.oy = p.y; return; }
+  const a = closed ? nodes[(i - 1 + n) % n] : nodes[Math.max(0, i - 1)], b = closed ? nodes[(i + 1) % n] : nodes[Math.min(n - 1, i + 1)];
+  let dx = b.x - a.x, dy = b.y - a.y; const l = Math.hypot(dx, dy) || 1; dx /= l; dy /= l;
+  const li = Math.hypot(p.x - a.x, p.y - a.y) / 3, lo = Math.hypot(b.x - p.x, b.y - p.y) / 3;
+  p.ix = p.x - dx * li; p.iy = p.y - dy * li; p.ox = p.x + dx * lo; p.oy = p.y + dy * lo;
+}
+/* Décalage d'une polyligne (murs épais) avec jonctions en onglet */
+function offsetLines(pts, d, closed) {
+  const n = pts.length, Lp = [], Rp = [];
+  const nrm = (a, b) => { const dx = b[0] - a[0], dy = b[1] - a[1], l = Math.hypot(dx, dy) || 1; return [-dy / l, dx / l]; };
+  for (let i = 0; i < n; i++) {
+    const hasPrev = closed || i > 0, hasNext = closed || i < n - 1;
+    const pPrev = pts[(i - 1 + n) % n], pNext = pts[(i + 1) % n];
+    const n1 = hasPrev ? nrm(pPrev, pts[i]) : null, n2 = hasNext ? nrm(pts[i], pNext) : null;
+    let m = n1 && n2 ? [n1[0] + n2[0], n1[1] + n2[1]] : (n1 || n2);
+    const ml = Math.hypot(m[0], m[1]) || 1; m = [m[0] / ml, m[1] / ml];
+    const ref = n2 || n1; let k = d / Math.max(0.25, m[0] * ref[0] + m[1] * ref[1]);
+    Lp.push([pts[i][0] + m[0] * k, pts[i][1] + m[1] * k]); Rp.push([pts[i][0] - m[0] * k, pts[i][1] - m[1] * k]);
+  }
+  return [Lp, Rp];
+}
 function polyLen(pts) { let l = 0; for (let i = 1; i < pts.length; i++) l += dist(pts[i - 1], pts[i]); return l; }
 
 /* ===== Couleurs ===== */
@@ -605,10 +738,10 @@ function heightColor(h) {
 /* ===== Historique (par patchs : compatible avec la collaboration) =====
    Chaque validation calcule la différence objet par objet avec l'état de référence.
    Annuler n'inverse que ses propres changements : les modifications des autres restent. */
-const LOCAL_SETTINGS = ['view', 'floorMode', 'activeFloor', 'heightView'];
+const LOCAL_SETTINGS = ['view', 'floorMode', 'activeFloor', 'heightView', 'isoRot', 'wallMode', 'wallCutOp'];
 const H = { undo: [], redo: [], B: null };
-function metaStr() {
-  const { objects, assets, ...rest } = S.doc; const st = { ...rest.settings };
+function metaStr(doc = S.doc) {
+  const { objects, assets, ...rest } = doc; const st = { ...rest.settings };
   for (const k of LOCAL_SETTINGS) delete st[k];
   return JSON.stringify({ ...rest, settings: st });
 }
@@ -696,10 +829,10 @@ function assetHref(id) {
   if (!u) { try { u = URL.createObjectURL(dataURLtoBlob(d)); } catch (e) { u = d; } blobCache.set(d, u); }
   return u;
 }
-function usedAssets() {
+function usedAssets(doc = S.doc) {
   const used = new Set();
-  for (const o of Object.values(S.doc.objects)) { if (o.asset) used.add(o.asset); if (o.img) used.add(o.img); }
-  for (const t of S.doc.library.types) if (t.picto?.kind === 'asset') used.add(t.picto.value);
+  for (const o of Object.values(doc.objects)) { if (o.asset) used.add(o.asset); if (o.img) used.add(o.img); }
+  for (const t of doc.library.types) if (t.picto?.kind === 'asset') used.add(t.picto.value);
   return used;
 }
 function readFileAsDataURL(f) { return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(f); }); }
@@ -725,9 +858,9 @@ function scheduleAutosave() {
 function mulberry32(a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
 const procCache = new Map();
 function genProc(o) {
-  const key = JSON.stringify([o.pts, o.gen]);
+  const pts = geomPts(o), key = JSON.stringify([pts, o.gen]);
   if (procCache.has(key)) return procCache.get(key);
-  const out = genProcRaw(o.pts, o.gen);
+  const out = genProcRaw(pts, o.gen);
   if (procCache.size > 300) procCache.clear();
   procCache.set(key, out); return out;
 }
@@ -928,7 +1061,7 @@ function cloudMenu(anchor) {
   else {
     h += `<p class="muted" style="margin:4px 8px 6px">Connecté : <b>${esc(cloudEmail())}</b></p>`;
     if (C.mapId) h += `<p class="muted" style="margin:0 8px 8px">Carte en ligne · rôle <b>${ROLE_LABEL[C.role]}</b></p>` + mi('share', 'Partager…') + mi('link', 'Copier le lien de la carte');
-    h += mi('maps', 'Mes cartes en ligne…') + mi('publish', C.mapId ? 'Publier une copie de cette carte…' : 'Publier cette carte en ligne…');
+    h += mi('maps', 'Mes cartes…') + mi('publish', C.mapId ? 'Enregistrer une copie en ligne…' : 'Enregistrer cette carte en ligne…');
     if (C.mapId) h += mi('leave', 'Revenir à ma carte locale');
     h += '<hr>' + mi('logout', 'Se déconnecter') + (cfg.fixed ? '' : mi('server', 'Serveur…'));
   }
@@ -1004,10 +1137,11 @@ async function mapsModal() {
   if (error) { toast(cloudErr(error), 4000); return; }
   const rows = data || [];
   const fmt = d => { try { return new Date(d).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }); } catch (e) { return ''; } };
-  openModal('Mes cartes en ligne', `${rows.length ? `<div class="mlist">${rows.map(r => `<div class="mrow${r.id === C.mapId ? ' on' : ''}"><div class="mn"><b>${esc(r.name)}</b><span class="muted">${ROLE_LABEL[r.role] || ''}${r.role !== 'owner' ? ' · de ' + esc(r.owner_email) : ''} · ${fmt(r.updated_at)}</span></div>
+  const localRow = `<div class="mrow${C.mapId ? '' : ' on'}"><div class="mn"><b>Carte locale (cet appareil)</b><span class="muted">${C.mapId ? 'enregistrée dans ce navigateur' : 'ouverte actuellement · ' + esc(S.doc.name)}</span></div>${C.mapId ? '<button id="mLocal">Ouvrir</button>' : ''}</div><div class="sub">En ligne</div>`;
+  openModal('Mes cartes', localRow + `${rows.length ? `<div class="mlist">${rows.map(r => `<div class="mrow${r.id === C.mapId ? ' on' : ''}"><div class="mn"><b>${esc(r.name)}</b><span class="muted">${ROLE_LABEL[r.role] || ''}${r.role !== 'owner' ? ' · de ' + esc(r.owner_email) : ''} · ${fmt(r.updated_at)}</span></div>
       <button data-open="${r.id}" class="primary">Ouvrir</button>${r.role === 'owner' ? `<button data-del="${r.id}" class="danger" title="Supprimer">🗑</button>` : ''}</div>`).join('')}</div>` : '<p class="muted">Aucune carte en ligne pour l’instant.</p>'}`, {
     wide: true,
-    footer: `<button id="mPub">${C.mapId ? 'Publier une copie de la carte actuelle' : 'Publier la carte actuelle'}</button><span class="grow"></span><button data-close>Fermer</button>`,
+    footer: `<button id="mNew" class="primary">＋ Nouvelle carte en ligne</button><button id="mPub">${C.mapId ? 'Enregistrer une copie en ligne' : 'Enregistrer la carte locale en ligne'}</button><span class="grow"></span><button data-close>Fermer</button>`,
     mount: m => {
       $$('[data-open]', m).forEach(b => b.onclick = () => { closeModal(); openCloudMap(b.dataset.open); });
       $$('[data-del]', m).forEach(b => b.onclick = () => {
@@ -1021,6 +1155,8 @@ async function mapsModal() {
         }, 'Supprimer');
       });
       $('#mPub', m).onclick = () => { closeModal(); publishMap(); };
+      $('#mNew', m).onclick = () => { closeModal(); newCloudMap(); };
+      $('#mLocal', m)?.addEventListener('click', () => { closeModal(); cloudLeave(false); });
     },
   });
 }
@@ -1028,29 +1164,37 @@ function progressModal(title) {
   openModal(title, '<p id="progTxt">Préparation…</p>');
   return t => { const e = $('#progTxt'); if (e) e.textContent = t; };
 }
-async function publishMap() {
-  if (!await ensureLogged(publishMap)) return;
-  const prog = progressModal('Publication en ligne');
+/* Enregistre une carte en ligne (la carte actuelle par défaut) puis l'ouvre */
+async function publishMap(doc) {
+  if (!doc || !doc.objects) doc = S.doc;
+  if (!await ensureLogged(() => publishMap(doc))) return;
+  const prog = progressModal('Enregistrement en ligne');
   try {
-    const meta = JSON.parse(metaStr());
-    const { data: m, error } = await C.sb.from('carto_maps').insert({ name: S.doc.name || 'Carte', doc: meta, updated_by: C.sid }).select('id').single();
+    const meta = JSON.parse(metaStr(doc));
+    const { data: m, error } = await C.sb.from('carto_maps').insert({ name: doc.name || 'Carte', doc: meta, updated_by: C.sid }).select('id').single();
     if (error) throw error;
     const id = m.id;
-    const assets = [...usedAssets()].filter(k => S.doc.assets[k]);
+    const assets = [...usedAssets(doc)].filter(k => doc.assets[k]);
     let n = 0;
     for (const ch of chunk(assets, 3)) {
-      const { error: e } = await C.sb.from('carto_assets').upsert(ch.map(k => ({ map_id: id, id: k, data: S.doc.assets[k] })), { onConflict: 'map_id,id', ignoreDuplicates: true });
+      const { error: e } = await C.sb.from('carto_assets').upsert(ch.map(k => ({ map_id: id, id: k, data: doc.assets[k] })), { onConflict: 'map_id,id', ignoreDuplicates: true });
       if (e) throw e; n += ch.length; prog(`Images : ${n} / ${assets.length}`);
     }
-    const objs = Object.values(S.doc.objects); n = 0;
+    const objs = Object.values(doc.objects); n = 0;
     for (const ch of chunk(objs, 300)) {
       const { error: e } = await C.sb.from('carto_objects').upsert(ch.map(o => ({ map_id: id, id: o.id, kind: o.kind, data: o, updated_by: C.sid })), { onConflict: 'map_id,id' });
       if (e) throw e; n += ch.length; prog(`Objets : ${n} / ${objs.length}`);
     }
     closeModal();
     await openCloudMap(id);
-    toast('Carte publiée en ligne. Utilise « Partager » pour inviter des personnes.', 4000);
-  } catch (e) { closeModal(); toast('Publication impossible : ' + cloudErr(e), 5000); }
+    toast('Carte enregistrée en ligne : elle se synchronise désormais toute seule. « Partager » pour inviter des personnes.', 4500);
+  } catch (e) { closeModal(); toast('Enregistrement en ligne impossible : ' + cloudErr(e), 5000); }
+}
+/* Ctrl+S : en ligne si connecté, sinon fichier */
+async function saveSmart(as) {
+  if (C.mapId) { clearTimeout(C.flushT); await cloudFlush(); toast(C.status === 'err' ? 'Synchronisation en échec : ' + C.statusMsg : 'Carte en ligne à jour (enregistrement automatique)'); return; }
+  if (C.session && !as) { publishMap(); return; }
+  saveDoc(as);
 }
 async function openCloudMap(id) {
   if (!await ensureLogged(() => openCloudMap(id))) return;
@@ -1134,6 +1278,20 @@ async function shareModal() {
         run(C.sb.from('carto_members').upsert({ map_id: C.mapId, email, role: $('#shRole', m).value }, { onConflict: 'map_id,email' }), `${email} invité(e)`);
       });
     },
+  });
+}
+
+async function newCloudMap() {
+  if (!await ensureLogged(newCloudMap)) return;
+  openModal('Nouvelle carte en ligne', row('Nom', '<input id="ncName" value="Nouvelle carte">'), {
+    footer: '<button data-close>Annuler</button><button class="primary" id="ncOk">Créer</button>',
+    mount: m => { const i = $('#ncName', m); i.focus(); i.select(); i.onkeydown = e => { if (e.key === 'Enter') $('#ncOk', m).click(); };
+      $('#ncOk', m).onclick = async () => {
+        let lib = null; if (IDB.db) { const l = await IDB.get('library'); if (l) try { lib = JSON.parse(l); } catch (e) { } }
+        const d = newDoc(lib ? { cats: lib.cats, types: lib.types } : null); if (lib?.assets) Object.assign(d.assets, lib.assets);
+        d.name = $('#ncName', m).value.trim() || 'Nouvelle carte';
+        closeModal(); publishMap(d);
+      }; },
   });
 }
 
@@ -1306,14 +1464,15 @@ function scheduleRender() { if (rq) return; rq = true; requestAnimationFrame(() 
 
 /* ===== Motifs de remplissage ===== */
 const patterns = new Map(); let defsDirty = true;
-function ensurePattern(mode, color) {
-  const id = `pt_${mode}_${String(color).replace(/[^a-z0-9]/gi, '')}`;
+function ensurePattern(mode, color, scale = 2) {
+  const k = clamp(+scale || 2, 0.25, 20);
+  const id = `pt_${mode}_${String(color).replace(/[^a-z0-9]/gi, '')}_${String(k).replace('.', 'p')}`;
   if (!patterns.has(id)) {
-    const c = color, z = 10; let inner = '';
-    if (mode === 'hatch') inner = `<rect width="${z}" height="${z}" fill="${c}" fill-opacity=".12"/><line x1="0" y1="0" x2="0" y2="${z}" stroke="${c}" stroke-width="2"/>`;
-    else if (mode === 'cross') inner = `<rect width="${z}" height="${z}" fill="${c}" fill-opacity=".12"/><line x1="0" y1="0" x2="0" y2="${z}" stroke="${c}" stroke-width="1.5"/><line x1="0" y1="0" x2="${z}" y2="0" stroke="${c}" stroke-width="1.5"/>`;
-    else if (mode === 'dots') inner = `<rect width="${z}" height="${z}" fill="${c}" fill-opacity=".1"/><circle cx="${z / 2}" cy="${z / 2}" r="1.8" fill="${c}"/>`;
-    else if (mode === 'grid') inner = `<rect width="${z}" height="${z}" fill="${c}" fill-opacity=".1"/><path d="M0 0H${z}M0 0V${z}" stroke="${c}" stroke-width="1"/>`;
+    const c = color, z = rd(10 * k), w = rd(1.6 * k); let inner = '';
+    if (mode === 'hatch') inner = `<rect width="${z}" height="${z}" fill="${c}" fill-opacity=".12"/><line x1="0" y1="0" x2="0" y2="${z}" stroke="${c}" stroke-width="${w}"/>`;
+    else if (mode === 'cross') inner = `<rect width="${z}" height="${z}" fill="${c}" fill-opacity=".12"/><line x1="0" y1="0" x2="0" y2="${z}" stroke="${c}" stroke-width="${rd(w * 0.8)}"/><line x1="0" y1="0" x2="${z}" y2="0" stroke="${c}" stroke-width="${rd(w * 0.8)}"/>`;
+    else if (mode === 'dots') inner = `<rect width="${z}" height="${z}" fill="${c}" fill-opacity=".1"/><circle cx="${z / 2}" cy="${z / 2}" r="${rd(1.3 * k)}" fill="${c}"/>`;
+    else if (mode === 'grid') inner = `<rect width="${z}" height="${z}" fill="${c}" fill-opacity=".1"/><path d="M0 0H${z}M0 0V${z}" stroke="${c}" stroke-width="${rd(w * 0.6)}"/>`;
     const rot = mode === 'hatch' || mode === 'cross' ? ' patternTransform="rotate(45)"' : '';
     patterns.set(id, `<pattern id="${id}" width="${z}" height="${z}" patternUnits="userSpaceOnUse"${rot}>${inner}</pattern>`);
     defsDirty = true;
@@ -1415,7 +1574,7 @@ function fillOf(o) {
   if (st.heightView && isClosed(o) && o.kind !== 'proc' && (isNum(o.elev) || s.fillMode !== 'none')) return heightColor(floorAlt(layerById(o.layer)?.floor) + (o.elev || 0));
   if (!isClosed(o) || !s.fillMode || s.fillMode === 'none') return 'none';
   if (s.fillMode === 'solid') return s.fill;
-  return `url(#${ensurePattern(s.fillMode, s.fill)})`;
+  return `url(#${ensurePattern(s.fillMode, s.fill, s.patScale)})`;
 }
 function strokeAttrs(s) {
   if (!s || !(s.sw > 0) || s.stroke === 'none') return 'stroke="none"';
@@ -1454,8 +1613,55 @@ function textBox(o) {
 }
 function renderWorld(L) {
   if (L.type !== 'draw' && L.type !== 'images') return '';
-  let h = ''; for (const id of L.items) { const o = obj(id); if (o) h += objWorld(o); }
+  let h = ''; const walls = [];
+  for (const id of L.items) { const o = obj(id); if (!o) continue; if (isIso() && o.wall && wallHeight(o) > 0) walls.push(o); else h += objWorld(o); }
+  if (walls.length) h += renderWallsIso(walls);
   return h;
+}
+/* ===== Murs en volume (vue isométrique) ===== */
+function wallHeight(o) { const h = isNum(o.wallH) ? o.wallH : 3; return S.doc.settings.wallMode === 'low' ? Math.min(h, 0.6) : h; }
+function renderWallsIso(walls) {
+  const st = S.doc.settings, X = S.exporting, F = f1, pieces = [];
+  const P = (pts) => pts.map(p => F(p[0]) + ',' + F(p[1])).join(' ');
+  const add = (p, v) => [p[0] + v[0], p[1] + v[1]];
+  const edge = 'stroke="#000" stroke-opacity=".35" stroke-width="0.8" vector-effect="non-scaling-stroke" stroke-linejoin="round"';
+  for (const o of walls) {
+    const pts = geomPts(o).filter((p, i, a) => i === 0 || dist(p, a[i - 1]) > 0.01); if (pts.length < 2) continue;
+    const closed = !!o.closed && pts.length > 2, n = pts.length, segs = closed ? n : n - 1;
+    const [Lp, Rp] = offsetLines(pts, Math.max(0.5, (o.style?.sw || 8) / 2), closed);
+    const base = o.elev || 0, vb = unproj(0, -liftOfAlt(base)), vt = unproj(0, -liftOfAlt(base + wallHeight(o)));
+    const col = o.style?.stroke || '#2b2f36', baseOp = o.style?.opacity ?? 1;
+    const id = X ? '' : ` data-oid="${o.id}"`;
+    const cen = [pts.reduce((a, p) => a + p[0], 0) / n, pts.reduce((a, p) => a + p[1], 0) / n];
+    const face = (A, B, side) => {
+      const pn = proj(side[0], side[1]); const front = pn[1] > 0.001;
+      const fill = front ? shade(col, 0.16 + 0.14 * Math.sign(pn[0])) : shade(col, -0.25);
+      return { front, svg: `<polygon${id} points="${P([add(A, vb), add(B, vb), add(B, vt), add(A, vt)])}" fill="${fill}" ${edge}/>` };
+    };
+    for (let i = 0; i < segs; i++) {
+      const a = pts[i], b = pts[(i + 1) % n], j = (i + 1) % n;
+      const dx = b[0] - a[0], dy = b[1] - a[1], l = Math.hypot(dx, dy) || 1, nl = [-dy / l, dx / l];
+      const m = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+      let out = nl;
+      if (closed) { if (pip(m[0] + nl[0] * 0.5, m[1] + nl[1] * 0.5, pts)) out = [-nl[0], -nl[1]]; }
+      else { const c = [m[0] - cen[0], m[1] - cen[1]]; if (Math.hypot(c[0], c[1]) > 0.5 && c[0] * nl[0] + c[1] * nl[1] < 0) out = [-nl[0], -nl[1]]; }
+      const isFront = proj(out[0], out[1])[1] > 0.001;
+      const cut = o.wallCut === 'always' || (o.wallCut !== 'never' && st.wallMode === 'cut' && isFront);
+      const op = rd((cut ? st.wallCutOp : 1) * baseOp);
+      const f1s = face(Lp[i], Lp[j], nl), f2s = face(Rp[j], Rp[i], [-nl[0], -nl[1]]);
+      const [back, frnt] = f1s.front ? [f2s, f1s] : [f1s, f2s];
+      let g = '';
+      if (cut) g += `<polygon${id} points="${P([Lp[i], Lp[j], Rp[j], Rp[i]].map(p => add(p, vb)))}" fill="${col}" fill-opacity="${rd(0.55 * baseOp)}" ${edge}/>`;
+      g += `<g opacity="${op}">${back.svg}${frnt.svg}<polygon${id} points="${P([Lp[i], Lp[j], Rp[j], Rp[i]].map(p => add(p, vt)))}" fill="${shade(col, 0.38)}" ${edge}/></g>`;
+      pieces.push({ depth: proj(m[0], m[1])[1], svg: g });
+    }
+    if (!closed) for (const k of [0, n - 1]) {
+      const g = `<polygon${id} points="${P([add(Lp[k], vb), add(Rp[k], vb), add(Rp[k], vt), add(Lp[k], vt)])}" fill="${shade(col, 0.05)}" ${edge} opacity="${rd(baseOp)}"/>`;
+      pieces.push({ depth: proj(pts[k][0], pts[k][1])[1] + 0.01, svg: g });
+    }
+  }
+  pieces.sort((p, q) => p.depth - q.depth);
+  return pieces.map(p => p.svg).join('');
 }
 function objWorld(o) {
   const s = o.style || {}, F = f1, X = S.exporting;
@@ -1483,7 +1689,7 @@ function objWorld(o) {
     }
     case 'image': out = `<image${id} href="${assetHref(o.asset)}" x="${F(o.cx - o.w / 2)}" y="${F(o.cy - o.h / 2)}" width="${F(o.w)}" height="${F(o.h)}" preserveAspectRatio="none"${rot}${op} pointer-events="all"/>`; break;
     case 'proc': {
-      const P = ptsStr(o.pts), cid = 'cp' + o.id + (X ? 'x' : '');
+      const P = ptsStr(geomPts(o)), cid = 'cp' + o.id + (X ? 'x' : '');
       if (S.doc.settings.heightView) {
         out = `<g${id}${op}><polygon points="${P}" fill="${heightColor(floorAlt(layerById(o.layer)?.floor) + (o.elev || 0))}" ${strokeAttrs(s)} pointer-events="all"/></g>`;
       } else {
@@ -1500,8 +1706,8 @@ function objWorld(o) {
 function bubbleR(L) { return L?.size || 14; }
 function linkScreenPts(l) {
   const a = obj(l.from), b = obj(l.to); if (!a || !b) return null;
-  const lift = layerLift(layerById(l.layer));
-  return [W2S(a.x, a.y, lift), ...(l.wps || []).map(p => W2S(p[0], p[1], lift)), W2S(b.x, b.y, lift)];
+  const la = objLift(a), lb = objLift(b);
+  return [W2S(a.x, a.y, la), ...(l.wps || []).map(p => W2S(p[0], p[1], la)), W2S(b.x, b.y, lb)];
 }
 function trimPts(pts, r0, r1) {
   const p = pts.map(x => [...x]);
@@ -1610,7 +1816,8 @@ function objWorldCorners(o) {
       const c = [o.cx, o.cy]; return [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([a, b]) => rotPt([o.cx + a * o.w / 2, o.cy + b * o.h / 2], c, o.rot));
     }
     case 'text': { const b = textBox(o), c = [o.x, o.y]; return [[b.x0, b.y0], [b.x0 + b.w, b.y0], [b.x0 + b.w, b.y0 + b.h], [b.x0, b.y0 + b.h]].map(p => rotPt(p, c, o.rot)); }
-    case 'poly': case 'free': case 'proc': return o.pts;
+    case 'poly': case 'free': return o.pts;
+    case 'proc': return geomPts(o);
     case 'path': return o.nodes.flatMap(n => [[n.x, n.y], [n.ix, n.iy], [n.ox, n.oy]]);
     case 'link': { const a = obj(o.from), b = obj(o.to); return [a && [a.x, a.y], ...(o.wps || []), b && [b.x, b.y]].filter(Boolean); }
     default: return [[o.x, o.y]];
@@ -1654,14 +1861,14 @@ function selOverlay(o, single) {
   s += `<polygon points="${cs.map(p => F(p[0]) + ',' + F(p[1])).join(' ')}" fill="none" stroke="${ACC}" stroke-width="1.2" stroke-dasharray="5 3" pointer-events="none"/>`;
   if (!single || S.mode !== 'edit') return s;
   if (S.vertexEdit === o.id) {
-    if (o.kind === 'path') {
-      o.nodes.forEach((n, i) => {
+    {
+      shapeNodes(o).forEach((n, i) => {
         const a = W([n.x, n.y]), hi = W([n.ix, n.iy]), ho = W([n.ox, n.oy]);
         if (dist(a, hi) > 1) s += `<line x1="${F(a[0])}" y1="${F(a[1])}" x2="${F(hi[0])}" y2="${F(hi[1])}" stroke="${ACC}" pointer-events="none"/><circle class="hdlb" data-bh="${i}" data-side="in" data-voi="${o.id}" cx="${F(hi[0])}" cy="${F(hi[1])}" r="4"/>`;
         if (dist(a, ho) > 1) s += `<line x1="${F(a[0])}" y1="${F(a[1])}" x2="${F(ho[0])}" y2="${F(ho[1])}" stroke="${ACC}" pointer-events="none"/><circle class="hdlb" data-bh="${i}" data-side="out" data-voi="${o.id}" cx="${F(ho[0])}" cy="${F(ho[1])}" r="4"/>`;
         s += `<rect class="hdlv" data-v="${i}" data-voi="${o.id}" x="${F(a[0] - 5)}" y="${F(a[1] - 5)}" width="10" height="10"/>`;
       });
-    } else (o.pts || []).forEach((p, i) => { const q = W(p); s += `<circle class="hdlv" data-v="${i}" data-voi="${o.id}" cx="${F(q[0])}" cy="${F(q[1])}" r="5.5"/>`; });
+    }
     return s;
   }
   if (o.kind === 'text') return s;
@@ -1792,6 +1999,7 @@ function contentScreenBox() {
 /* ===== Outils ===== */
 const TOOLS = [
   { id: 'select', key: 'v', label: 'Sélection', g: 0, ico: '<path d="M5 3l11 6.2-5 1.4L8.3 16z" fill="currentColor" stroke="none"/>' },
+  { id: 'node', key: 'a', label: 'Édition des nœuds (Bézier)', g: 0, ico: '<path d="M4 3l10 5.6-4.6 1.3L6.8 14.5z" fill="none"/><rect x="12.5" y="12.5" width="5" height="5" fill="currentColor" stroke="none"/><path d="M11 18.5h-4M18.5 11v-4" stroke-width="1.2"/>' },
   { id: 'hand', key: 'h', label: 'Main (déplacer la vue)', g: 0, ico: '<path d="M7 10V5.5a1.2 1.2 0 0 1 2.4 0V9M9.4 9V4.3a1.2 1.2 0 0 1 2.4 0V9M11.8 9V5a1.2 1.2 0 0 1 2.4 0v5M14.2 10V7.5a1.2 1.2 0 0 1 2.4 0V12c0 3-2 5.5-5 5.5S7 16 5.5 13.5L4 11a1.2 1.2 0 0 1 2-1.3L7 11"/>' },
   { id: 'rect', key: 'r', label: 'Rectangle', g: 1, layer: 'draw', ico: '<rect x="3.5" y="5" width="13" height="10" rx="1"/>' },
   { id: 'ellipse', key: 'e', label: 'Ellipse', g: 1, layer: 'draw', ico: '<ellipse cx="10" cy="10" rx="7" ry="5"/>' },
@@ -1809,6 +2017,7 @@ const TOOLS = [
   { id: 'measure', key: 'm', label: 'Mesure', g: 4, ico: '<path d="M3 14L14 3l3 3L6 17z"/><path d="M6 11l1.5 1.5M8.5 8.5L10 10M11 6l1.5 1.5"/>' },
 ];
 const HINTS = {
+  node: 'Clic sur une forme : afficher ses nœuds · glisser un nœud ou une poignée · clic sur le tracé : ajouter un nœud · double-clic sur un nœud : angle ↔ courbe · Alt+clic : supprimer · Alt pendant le glisser : poignées indépendantes',
   select: 'Clic : sélectionner · Maj+clic : ajouter · Glisser : déplacer ou cadre de sélection · Double-clic : éditer les points',
   hand: 'Glisser pour déplacer la vue · Molette : zoom',
   rect: 'Glisser pour tracer · Maj : carré · Alt : sans magnétisme',
@@ -1834,7 +2043,8 @@ function setTool(id) {
   if (S.mode === 'comment' && !['select', 'hand', 'note', 'measure'].includes(id)) id = 'select';
   S.tool = id; S.measure = null;
   if (id !== 'flow') S.flowCur = null;
-  if (id !== 'select') S.vertexEdit = null;
+  if (id !== 'node') S.vertexEdit = null;
+  else if (!S.vertexEdit) { const o = [...S.sel].map(obj).find(x => x && NODE_KINDS.has(x.kind) && canEdit(x)); if (o) { S.vertexEdit = o.id; S.sel = new Set([o.id]); } }
   if (id === 'icon') showSideTab('icons');
   $('#stage').dataset.tool = id;
   document.body.dataset.tool = id;
@@ -1911,6 +2121,7 @@ function onDown(e) {
   const o = hi.o && canEdit(hi.o) ? hi.o : null;
   switch (S.tool) {
     case 'select': return downSelect(e, sp, hi, o);
+    case 'node': return downNode(e, sp, hi, o);
     case 'rect': case 'ellipse': return downBox(sp);
     case 'polygon': case 'polyline': case 'wall': case 'proc': return downPoly(sp);
     case 'pen': return downPen(sp);
@@ -1939,8 +2150,6 @@ function startPan(sp) { S.drag = { type: 'pan', sp, v0: { ...S.view } }; $('#sta
 function downSelect(e, sp, hi, o) {
   if (S.mode === 'edit') {
     if (hi.h && obj(hi.h.oid)) { const O = obj(hi.h.oid); S.drag = { type: 'resize', id: O.id, h: hi.h.h, O: deep(O), sp }; return; }
-    if (hi.v && obj(hi.v.oid)) { if (e.altKey) { deleteVertex(obj(hi.v.oid), hi.v.i); return; } S.drag = { type: 'vertex', id: hi.v.oid, i: hi.v.i, O: deep(obj(hi.v.oid)), sp }; return; }
-    if (hi.bh && obj(hi.bh.oid)) { S.drag = { type: 'bezh', id: hi.bh.oid, i: hi.bh.i, side: hi.bh.side, sp }; return; }
     if (hi.wp && obj(hi.wp.oid)) { const l = obj(hi.wp.oid); if (e.altKey) { l.wps.splice(hi.wp.i, 1); commit(); return; } S.drag = { type: 'wp', id: l.id, i: hi.wp.i, sp }; return; }
   }
   if (o) {
@@ -1953,7 +2162,28 @@ function downSelect(e, sp, hi, o) {
   if (!e.shiftKey) { if (S.sel.size || S.vertexEdit) { S.sel.clear(); S.vertexEdit = null; afterSelect(); } }
   S.drag = { type: 'marquee', sp, add: e.shiftKey }; S.marquee = [sp[0], sp[1], sp[0], sp[1]];
 }
-function afterSelect() { refreshProps(); scheduleRender(); }
+/* --- Outil d'édition des nœuds --- */
+function downNode(e, sp, hi, o) {
+  if (S.mode !== 'edit') return;
+  if (hi.v && obj(hi.v.oid)) {
+    const O = ensureNodes(obj(hi.v.oid));
+    if (e.altKey) { deleteVertex(O, hi.v.i); return; }
+    S.drag = { type: 'vertex', id: O.id, i: hi.v.i, O: deep(O), sp }; return;
+  }
+  if (hi.bh && obj(hi.bh.oid)) { const O = ensureNodes(obj(hi.bh.oid)); S.drag = { type: 'bezh', id: O.id, i: hi.bh.i, side: hi.bh.side, sp, O: deep(O) }; return; }
+  const cur = obj(S.vertexEdit);
+  if (cur && canEdit(cur)) {
+    const lift = objLift(cur);
+    const r = nearestOnNodes(shapeNodes(cur), nodesClosed(cur), sp, p => W2S(p[0], p[1], lift));
+    if (r.i >= 0 && r.d < 9) {
+      ensureNodes(cur); const k = splitNodes(cur.nodes, r.i, r.t); markObj(cur);
+      S.drag = { type: 'vertex', id: cur.id, i: k, O: deep(cur), sp, fresh: true }; return;
+    }
+  }
+  if (o && NODE_KINDS.has(o.kind)) { S.vertexEdit = o.id; S.sel = new Set([o.id]); S.activeLayer = o.layer; refreshLayersPanel(); afterSelect(); return; }
+  if (S.vertexEdit || S.sel.size) { S.vertexEdit = null; S.sel.clear(); afterSelect(); }
+}
+function afterSelect() { refreshProps(); renderToolOptions(); scheduleRender(); }
 
 function refPoint(O) {
   if (O.cx !== undefined) return [O.cx - O.w / 2, O.cy - O.h / 2];
@@ -2025,7 +2255,7 @@ function dragResize(d, sp, e) {
 }
 function deleteVertex(o, i) {
   if (o.pts) { const min = isClosed(o) ? 3 : 2; if (o.pts.length <= min) { toast('Nombre minimal de points atteint'); return; } o.pts.splice(i, 1); }
-  else if (o.nodes) { if (o.nodes.length <= 2) return; o.nodes.splice(i, 1); }
+  else if (o.nodes) { if (o.nodes.length <= (nodesClosed(o) ? 3 : 2)) { toast('Nombre minimal de points atteint'); return; } o.nodes.splice(i, 1); }
   commit();
 }
 
@@ -2055,7 +2285,7 @@ function downPoly(sp) {
     const o = t === 'proc'
       ? addObject({ kind: 'proc', pts: [w], gen: deep(S.procGen), style: { stroke: shade(S.procGen.bg, -0.35), sw: 1.5, fill: '#000', fillMode: 'none', dash: 'solid', opacity: 1 } }, L.id)
       : addObject({ kind: 'poly', pts: [w], closed: false, style: deep(t === 'wall' ? S.wallStyle : S.toolStyle) }, L.id);
-    if (t === 'wall') o.wall = true;
+    if (t === 'wall') { o.wall = true; o.wallH = S.wallH; }
     S.draft = { id: o.id, tool: t, lift }; S.sel = new Set([o.id]); scheduleRender(); return;
   }
   const o = obj(S.draft.id); if (!o) { S.draft = null; return; }
@@ -2205,6 +2435,7 @@ function onMove(e) {
     case 'flowpress': if (d.moved || dist(sp, d.sp) > 4) { d.moved = true; dragMove(d, sp); } break;
     case 'resize': dragResize(d, sp, e); break;
     case 'vertex': {
+      if (!d.moved && dist(sp, d.sp) < 3) break; d.moved = true;
       const o = obj(d.id); if (!o) break; const w = snap(S2W(sp[0], sp[1], objLift(o)));
       if (o.pts) o.pts[d.i] = [f1(w[0]), f1(w[1])];
       else if (o.nodes) { const n = o.nodes[d.i], N = d.O.nodes[d.i], dx = w[0] - N.x, dy = w[1] - N.y; Object.assign(n, { x: N.x + dx, y: N.y + dy, ix: N.ix + dx, iy: N.iy + dy, ox: N.ox + dx, oy: N.oy + dy }); }
@@ -2264,16 +2495,15 @@ function onDbl(e) {
     if (o?.nodes && o.nodes.length > 1) { const a = o.nodes[o.nodes.length - 1], b = o.nodes[o.nodes.length - 2]; if (Math.hypot(a.x - b.x, a.y - b.y) * S.view.z < 6) o.nodes.pop(); }
     finishDraft(); return;
   }
-  if (S.tool !== 'select') return;
-  const hi = hitInfo(e); const o = hi.o && canEdit(hi.o) ? hi.o : null;
-  if (!o) { if (S.vertexEdit) { S.vertexEdit = null; scheduleRender(); } return; }
-  if (S.vertexEdit === o.id && o.pts) {
-    const lift = objLift(o); const pts = o.pts.map(p => W2S(p[0], p[1], lift));
-    const ns = nearestSeg(pts, sp, isClosed(o));
-    if (ns.i >= 0 && ns.d < 14) { const w = S2W(ns.q[0], ns.q[1], lift); o.pts.splice(ns.i + 1, 0, [f1(w[0]), f1(w[1])]); commit(); }
+  const hi = hitInfo(e);
+  if (S.tool === 'node') {
+    if (hi.v && obj(hi.v.oid)) { const O = ensureNodes(obj(hi.v.oid)); toggleSmooth(O.nodes, hi.v.i, nodesClosed(O)); markObj(O); commit(); }
     return;
   }
-  if (PT_KINDS.has(o.kind) || o.kind === 'path') { S.vertexEdit = o.id; S.sel = new Set([o.id]); afterSelect(); toast('Édition des points · Alt+clic : supprimer · double-clic sur un segment : ajouter · Échap : terminer'); return; }
+  if (S.tool !== 'select') return;
+  const o = hi.o && canEdit(hi.o) ? hi.o : null;
+  if (!o) return;
+  if (NODE_KINDS.has(o.kind)) { S.sel = new Set([o.id]); S.vertexEdit = o.id; setTool('node'); afterSelect(); return; }
   if (o.kind === 'link') { insertWaypoint(o, sp); return; }
   if (o.kind === 'text' || o.kind === 'note') { focusPropField('text', true); return; }
   if (o.kind === 'bubble' || o.kind === 'icon') { focusPropField(o.kind === 'bubble' ? 'title' : 'name'); return; }
@@ -2395,12 +2625,23 @@ function renderToolbar() {
   $('#tools').innerHTML = h;
   $$('#tools .tb').forEach(b => b.onclick = () => setTool(b.dataset.t));
 }
+const STYLED_SHAPE = o => o && o.style && ['rect', 'ellipse', 'poly', 'path', 'free'].includes(o.kind);
 function renderToolOptions() {
   const t = S.tool; let box = '';
-  const shape = ['rect', 'ellipse', 'polygon', 'polyline', 'pen', 'free'].includes(t);
+  const shape = ['rect', 'ellipse', 'polygon', 'polyline', 'pen', 'free', 'node'].includes(t);
+  const selShapes = selObjs().filter(o => STYLED_SHAPE(o) && canEdit(o));
+  const selWalls = selShapes.filter(o => o.wall), selPlain = selShapes.filter(o => !o.wall);
+  let styleTargets = [], defaults = null;
   if (S.mode === 'edit') {
-    if (shape) box = `<label>Trait ${colorIn('stroke', S.toolStyle.stroke)}</label><label>${numIn('sw', S.toolStyle.sw, 'min="0" step="0.5" style="width:52px"')}</label><label>Remplissage ${selIn('fillMode', S.toolStyle.fillMode, FILL_MODES)} ${colorIn('fill', S.toolStyle.fill)}</label>`;
-    else if (t === 'wall') box = `<label>Mur ${colorIn('stroke', S.wallStyle.stroke)}</label><label>Épaisseur ${numIn('sw', S.wallStyle.sw, 'min="1" step="1" style="width:52px"')}</label>`;
+    if ((shape || t === 'select') && (selPlain.length || (shape && t !== 'node'))) {
+      const src = selPlain[0]?.style || S.toolStyle;
+      styleTargets = selPlain; defaults = S.toolStyle;
+      box = `${selPlain.length ? `<span class="muted">${selPlain.length > 1 ? selPlain.length + ' formes' : 'Forme'}</span>` : ''}<label>Trait ${colorIn('stroke', src.stroke)}</label><label>${numIn('sw', src.sw, 'min="0" step="0.5" style="width:52px"')}</label><label>Remplissage ${selIn('fillMode', src.fillMode || 'none', FILL_MODES)} ${colorIn('fill', src.fill)}</label>${src.fillMode && src.fillMode !== 'none' && src.fillMode !== 'solid' ? `<label>Motif ${rangeIn('patScale', src.patScale ?? 2, 0.5, 8, 0.25)}</label>` : ''}`;
+    } else if (t === 'wall' || ((t === 'select' || t === 'node') && selWalls.length)) {
+      const src = selWalls[0]?.style || S.wallStyle;
+      styleTargets = selWalls; defaults = S.wallStyle;
+      box = `${selWalls.length ? '<span class="muted">Mur</span>' : ''}<label>Mur ${colorIn('stroke', src.stroke)}</label><label>Épaisseur ${numIn('sw', src.sw, 'min="1" step="1" style="width:52px"')}</label><label>Hauteur ${numIn('wallH', selWalls[0] ? (selWalls[0].wallH ?? 3) : S.wallH, 'min="0" step="0.5" style="width:52px"')} ${esc(S.doc.grid.unitName)}</label>`;
+    }
     else if (t === 'proc') box = `<label>Motif ${selIn('type', S.procGen.type, Object.fromEntries(Object.entries(GENS).map(([k, v]) => [k, v.label])))}</label><label>Densité ${rangeIn('density', S.procGen.density, 0.2, 3, 0.1)}</label>`;
     else if (t === 'text') box = `<label>Taille ${numIn('size', S.textSize, 'min="4" step="1" style="width:56px"')}</label>`;
     else if (t === 'flow') {
@@ -2414,17 +2655,23 @@ function renderToolOptions() {
   const hint = S.mode === 'read' ? 'Mode lecture : clic sur une bulle ou une icône pour voir sa fiche · glisser pour se déplacer' : HINTS[t] || '';
   $('#toolOpts').innerHTML = (box ? `<div class="box">${box}</div>` : '') + (hint ? `<div class="hint">${hint}</div>` : '');
   const root = $('#toolOpts');
-  const target = t === 'wall' ? S.wallStyle : t === 'proc' ? S.procGen : t === 'flow' || t === 'text' ? S : S.toolStyle;
+  const target = t === 'proc' ? S.procGen : t === 'flow' || t === 'text' ? S : null;
   $$('[data-k]', root).forEach(el => {
     const k = el.dataset.k;
+    const read = () => el.dataset.t === 'num' ? parseFloat(el.value) : el.value;
     const ap = () => {
-      let v = el.dataset.t === 'num' ? parseFloat(el.value) : el.value;
+      const v = read();
       if (k === 'size') { S.textSize = v; return; }
       if (k === 'linkStyle') { S.linkStyle = v; return; }
-      target[k] = v;
-      if (t === 'proc' && k === 'type') { S.procGen.c = GENS[v].c; S.procGen.bg = GENS[v].bg; }
+      if (defaults) {
+        if (k === 'wallH') { if (isNum(v)) { S.wallH = v; for (const o of styleTargets) { o.wallH = v; markObj(o); } } }
+        else { if (k === 'sw' && !isNum(v)) return; defaults[k] = v; for (const o of styleTargets) { o.style[k] = v; markObj(o); } }
+        scheduleRender(); return;
+      }
+      if (target) { target[k] = v; if (t === 'proc' && k === 'type') { S.procGen.c = GENS[v].c; S.procGen.bg = GENS[v].bg; } }
     };
-    el.addEventListener('input', ap); el.addEventListener('change', ap);
+    el.addEventListener('input', ap);
+    el.addEventListener('change', () => { ap(); if (styleTargets.length) commit(); else if (k === 'fillMode') renderToolOptions(); });
   });
   $('#endChain', root)?.addEventListener('click', () => { S.flowCur = null; renderToolOptions(); scheduleRender(); });
 }
@@ -2434,6 +2681,7 @@ function updateUndoButtons() { const u = $('#bUndo'), r = $('#bRedo'); if (u) { 
 function setSaveState(s) { const el = $('#saveState'); if (!el) return; el.textContent = s === 'modif' ? '● modifications' : s === 'auto' ? '✓ sauvegarde locale' : s === 'file' ? '✓ enregistré' : ''; el.style.color = s === 'modif' ? '#e8b04a' : ''; }
 function updateTopBar() {
   $$('#viewSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === S.doc.settings.view));
+  $$('.isorot').forEach(b => b.style.display = isIso() ? '' : 'none');
   $$('#modeSeg button').forEach(b => { b.classList.toggle('on', b.dataset.m === S.mode); b.disabled = !roleAllows(b.dataset.m); b.title = b.disabled ? 'Ton rôle sur cette carte ne le permet pas' : ''; });
   $('#bHeight').classList.toggle('primary', !!S.doc.settings.heightView);
   $('#bLegend').classList.toggle('primary', !!S.doc.legend.show);
@@ -2441,12 +2689,16 @@ function updateTopBar() {
 }
 function fileMenu(anchor) {
   const mi = (id, label, k = '', cls = '') => `<button class="mi ${cls}" data-mi="${id}">${label}${k ? `<span class="k">${k}</span>` : ''}</button>`;
-  openPopover(anchor, mi('new', 'Nouvelle carte', '', 'edit-only') + mi('open', 'Ouvrir…', 'Ctrl+O') + mi('save', 'Enregistrer', 'Ctrl+S') + mi('saveas', 'Enregistrer sous…', 'Ctrl+Maj+S') + '<hr>' +
+  const online = !!C.mapId, logged = !!C.session;
+  const head = `<p class="muted" style="margin:2px 10px 6px">${online ? '☁ Carte en ligne : enregistrée automatiquement' : logged ? 'Carte locale (dans ce navigateur)' : 'Carte locale · connecte-toi pour enregistrer en ligne'}</p>`;
+  openPopover(anchor, head + mi('maps', 'Mes cartes…') + mi('new', 'Nouvelle carte…', '', 'edit-only')
+    + (online ? mi('save', 'Synchroniser maintenant', 'Ctrl+S') + mi('publish', 'Enregistrer une copie en ligne…') : mi('save', logged ? 'Enregistrer en ligne' : 'Enregistrer (fichier .json)', 'Ctrl+S'))
+    + '<hr>' + mi('open', 'Ouvrir un fichier .json…', 'Ctrl+O') + mi('saveas', 'Télécharger une copie (.json)…', 'Ctrl+Maj+S') + '<hr>' +
     mi('img', 'Importer des images…', '', 'edit-only') + '<hr>' + mi('png', 'Exporter en image (PNG / SVG)…') + mi('script', 'Exporter le script du flow (.md)') + '<hr>' +
     mi('libexp', 'Exporter la bibliothèque d’icônes') + mi('libimp', 'Importer une bibliothèque d’icônes…', '', 'edit-only'), p => {
       $$('[data-mi]', p).forEach(b => b.onclick = () => {
         closePopover();
-        ({ new: newMap, open: openDoc, save: () => saveDoc(false), saveas: () => saveDoc(true), img: () => $('#fileImg').click(), png: exportModal, script: exportScript, libexp: exportLibrary, libimp: () => $('#fileLib').click() })[b.dataset.mi]();
+        ({ maps: () => C.session ? mapsModal() : ensureLogged(mapsModal), publish: () => publishMap(), new: newMap, open: openDoc, save: () => saveSmart(false), saveas: () => saveDoc(true), img: () => $('#fileImg').click(), png: exportModal, script: exportScript, libexp: exportLibrary, libimp: () => $('#fileLib').click() })[b.dataset.mi]();
       });
     });
 }
@@ -2474,7 +2726,10 @@ function heightPopover(anchor) {
     ${row('Hauteur min', numIn('hMin', st.hMin, 'step="0.5"') + `<span class="u">${esc(S.doc.grid.unitName)}</span>`)}
     ${row('Hauteur max', numIn('hMax', st.hMax, 'step="0.5"') + `<button id="hAuto">Auto</button>`)}
     ${row('Écart des étages (iso)', rangeIn('isoGap', st.isoGap, 0, 4, 0.1))}
-    <p class="muted">Chaque forme peut recevoir une <b>hauteur</b> (panneau Propriétés), relative à son étage. La vue hauteurs colore les formes selon leur altitude (étage + hauteur), comme une heightmap. En vue isométrique, les étages et les formes surélevées sont décalés vers le haut.</p></div>`, p => {
+    <div class="sub">Murs en vue isométrique</div>
+    ${row('Affichage', selIn('wallMode', st.wallMode || 'cut', { full: 'Pleins', cut: 'Coupés face à moi', low: 'Abaissés' }))}
+    ${row('Opacité des murs coupés', rangeIn('wallCutOp', st.wallCutOp ?? 0.2, 0, 1, 0.05))}
+    <p class="muted">Chaque objet a une <b>hauteur au sol</b> (panneau Propriétés), relative à son étage ; les murs ont en plus une <b>hauteur de mur</b>. La vue hauteurs colore les formes selon leur altitude, comme une heightmap. En iso, « Coupés face à moi » rend transparents les pans de mur tournés vers la caméra ; tourne la vue avec ⟲ ⟳ pour regarder sous un autre angle.</p></div>`, p => {
       bindFields(p, () => [S.doc.settings], { noCommit: true, onApply: () => { markAllDirty(); updateTopBar(); scheduleAutosave(); } });
       $('#hAuto', p).onclick = () => {
         const hs = [];
@@ -2492,6 +2747,13 @@ function setViewMode(v) {
   const p = proj(w[0], w[1]);
   S.view.x = c[0] - p[0] * S.view.z; S.view.y = c[1] - (p[1] - activeLift()) * S.view.z;
   markAllDirty(); updateTopBar(); scheduleRender(); scheduleAutosave();
+}
+function rotateIso(d) {
+  const c = [S.vw / 2, S.vh / 2], lift = activeLift(), w = S2W(c[0], c[1], lift);
+  S.doc.settings.isoRot = (((S.doc.settings.isoRot || 0) + d) % 360 + 360) % 360;
+  const p = proj(w[0], w[1]);
+  S.view.x = c[0] - p[0] * S.view.z; S.view.y = c[1] - (p[1] - lift) * S.view.z;
+  markAllDirty(); scheduleRender(); scheduleAutosave();
 }
 function applyMode(m) {
   if (m) S.mode = m;
@@ -2651,11 +2913,36 @@ function selObjs() { return [...S.sel].map(obj).filter(Boolean); }
 function styleSection(o, isWall) {
   const s = o.style || {};
   let h = row(isWall ? 'Mur' : 'Trait', colorIn('style.stroke', s.stroke) + numIn('style.sw', s.sw, 'min="0" step="0.5"') + (isWall ? '' : selIn('style.dash', s.dash || 'solid', { solid: 'Plein', dash: 'Tirets', dot: 'Points' })));
-  if (o.kind !== 'text' && o.kind !== 'image' && (isClosed(o) || o.kind === 'rect' || o.kind === 'ellipse')) h += row('Remplissage', selIn('style.fillMode', s.fillMode || 'none', FILL_MODES) + colorIn('style.fill', s.fill));
+  if (o.kind !== 'text' && o.kind !== 'image' && (isClosed(o) || o.kind === 'rect' || o.kind === 'ellipse')) {
+    h += row('Remplissage', selIn('style.fillMode', s.fillMode || 'none', FILL_MODES).replace('<select', '<select data-rebuild') + colorIn('style.fill', s.fill));
+    if (s.fillMode && s.fillMode !== 'none' && s.fillMode !== 'solid') h += row('Taille du motif', rangeIn('style.patScale', s.patScale ?? 2, 0.5, 8, 0.25));
+  }
   h += row('Opacité', rangeIn('style.opacity', s.opacity ?? 1, 0, 1, 0.05));
   return h;
 }
-function heightRow(o) { return row('Hauteur', numIn('elev', o.elev, 'step="0.5" placeholder="—"') + `<span class="u">${esc(S.doc.grid.unitName)} / étage</span>`); }
+function heightRow(o) { return row('Hauteur au sol', numIn('elev', o.elev, 'step="0.5" placeholder="0"') + `<span class="u">${esc(S.doc.grid.unitName)} (depuis l’étage)</span>`); }
+function wallSection(o) {
+  const U = esc(S.doc.grid.unitName);
+  return `<div class="sub">Mur</div>` + row('Hauteur du mur', numIn('wallH', o.wallH ?? 3, 'min="0" step="0.5"') + `<span class="u">${U}</span>`)
+    + row('Coupe en iso', selIn('wallCut', o.wallCut || 'auto', { auto: 'Automatique', never: 'Jamais coupé', always: 'Toujours coupé' }))
+    + `<p class="muted">En vue isométrique, le mur est dessiné en volume. « Automatique » rend transparents les pans tournés vers toi (réglage dans Hauteurs ▾).</p>`;
+}
+function shapeTools(o) {
+  return `<div class="btnrow"><button id="editPts" title="Outil Édition des nœuds (A)">Éditer les nœuds</button>${o.wall ? '' : '<button id="mkWalls" title="Crée un nouvel objet mur qui suit ce contour">Créer des murs depuis ce contour</button>'}</div>`;
+}
+function wallsFromShape(o) {
+  const L = layerById(o.layer); if (!L) return;
+  const closed = nodesClosed(o);
+  let w;
+  if (o.kind === 'rect' || (o.pts && o.kind !== 'free')) w = { kind: 'poly', pts: (o.kind === 'rect' ? shapeNodes(o).map(n => [n.x, n.y]) : deep(o.pts)).map(p => [f1(p[0]), f1(p[1])]), closed };
+  else w = { kind: 'path', nodes: deep(shapeNodes(o)), closed };
+  Object.assign(w, { wall: true, wallH: S.wallH, style: deep(S.wallStyle) });
+  if (isNum(o.elev)) w.elev = o.elev;
+  const at = L.items.indexOf(o.id) + 1;
+  addObject(w, L.id, at);
+  S.sel = new Set([w.id]); S.vertexEdit = null; commit();
+  toast('Mur créé à partir du contour (objet indépendant)');
+}
 function renderPropsTab(b) {
   const objs = selObjs(); const ro = S.mode !== 'edit';
   if (!objs.length) {
@@ -2683,13 +2970,13 @@ function renderPropsTab(b) {
   switch (o.kind) {
     case 'rect': case 'ellipse':
       h += styleSection(o) + (o.kind === 'rect' ? row('Arrondi', numIn('style.rx', o.style.rx || 0, 'min="0" step="1"')) : '') + row('Rotation', numIn('rot', o.rot || 0, 'step="5"') + '<span class="u">°</span>') + heightRow(o);
-      h += `<div class="kv"><span>Dimensions</span><b>${fmtLen(o.w)} × ${fmtLen(o.h)}</b></div>`; break;
+      h += `<div class="kv"><span>Dimensions</span><b>${fmtLen(o.w)} × ${fmtLen(o.h)}</b></div>` + shapeTools(o); break;
     case 'poly': case 'free': case 'path': {
-      h += styleSection(o, o.wall) + row('Fermé', chkIn('closed', o.closed, 'data-rebuild')) + heightRow(o);
-      const pts = o.pts || o.nodes?.map(n => [n.x, n.y]) || [];
+      h += styleSection(o, o.wall) + row('Fermé', chkIn('closed', o.closed, 'data-rebuild')) + row('Mur', chkIn('wall', o.wall, 'data-rebuild')) + heightRow(o);
+      if (o.wall) h += wallSection(o);
+      const pts = geomPts(o);
       const len = polyLen(o.closed ? [...pts, pts[0]] : pts);
-      h += `<div class="kv"><span>${o.closed ? 'Périmètre' : 'Longueur'} (approx.)</span><b>${fmtLen(len)}</b></div>`;
-      h += `<div class="btnrow"><button id="editPts">${S.vertexEdit === o.id ? 'Terminer l’édition des points' : 'Éditer les points'}</button></div><p class="muted">Édition des points : glisser un point · Alt+clic pour le supprimer · double-clic sur un segment pour en ajouter.</p>`;
+      h += `<div class="kv"><span>${o.closed ? 'Périmètre' : 'Longueur'}</span><b>${fmtLen(len)}</b></div>` + shapeTools(o);
       break;
     }
     case 'proc':
@@ -2699,15 +2986,15 @@ function renderPropsTab(b) {
         + row('Couleurs', 'motif ' + colorIn('gen.c', o.gen.c) + ' fond ' + colorIn('gen.bg', o.gen.bg))
         + row('Contour', colorIn('style.stroke', o.style.stroke) + numIn('style.sw', o.style.sw, 'min="0" step="0.5"'))
         + row('Opacité', rangeIn('style.opacity', o.style.opacity ?? 1, 0, 1, 0.05)) + heightRow(o)
-        + `<div class="btnrow"><button id="editPts">${S.vertexEdit === o.id ? 'Terminer l’édition des points' : 'Éditer le contour'}</button></div>`;
+        + shapeTools(o);
       break;
     case 'text':
       h += row('Texte', areaIn('text', o.text, '', 3), 'col') + row('Taille', numIn('size', o.size, 'min="2" step="1"') + colorIn('color', o.color) + `<label class="u">${chkIn('bold', o.bold)} gras</label>`)
         + row('Alignement', selIn('align', o.align || 'start', { start: 'Gauche', middle: 'Centré', end: 'Droite' })) + row('Contour blanc', chkIn('halo', o.halo))
-        + row('Rotation', numIn('rot', o.rot || 0, 'step="5"') + '<span class="u">°</span>') + row('Opacité', rangeIn('style.opacity', o.style?.opacity ?? 1, 0, 1, 0.05));
+        + row('Rotation', numIn('rot', o.rot || 0, 'step="5"') + '<span class="u">°</span>') + row('Opacité', rangeIn('style.opacity', o.style?.opacity ?? 1, 0, 1, 0.05)) + heightRow(o);
       break;
     case 'image':
-      h += row('Opacité', rangeIn('style.opacity', o.style?.opacity ?? 1, 0, 1, 0.05)) + row('Rotation', numIn('rot', o.rot || 0, 'step="5"') + '<span class="u">°</span>')
+      h += row('Opacité', rangeIn('style.opacity', o.style?.opacity ?? 1, 0, 1, 0.05)) + row('Rotation', numIn('rot', o.rot || 0, 'step="5"') + '<span class="u">°</span>') + heightRow(o)
         + `<div class="kv"><span>Dimensions</span><b>${fmtLen(o.w)} × ${fmtLen(o.h)}</b></div><div class="btnrow"><button id="imgNat">Taille d’origine</button><button id="imgRep">Remplacer…</button></div><p class="muted">Redimensionner garde les proportions (Maj pour les libérer). Verrouille le calque pour décalquer par-dessus.</p>`;
       break;
     case 'bubble': {
@@ -2716,7 +3003,7 @@ function renderPropsTab(b) {
       const ins = Object.values(S.doc.objects).filter(l => l.kind === 'link' && (l.to === o.id || (l.both && l.from === o.id))).map(l => L.order.indexOf(l.to === o.id ? l.from : l.to) + 1).filter(x => x > 0);
       h += `<div class="kv"><span>Numéro</span><b style="color:${o.color || L.color}">${n}</b></div><div class="kv"><span>Vient de</span><b>${ins.join(', ') || '—'}</b></div><div class="kv"><span>Mène à</span><b>${outs.join(', ') || '—'}</b></div>`
         + row('Titre', txtIn('title', o.title, 'Ex. : Arrivée au village'), 'col') + row('Description', areaIn('desc', o.desc, 'Texte affiché dans l’info-bulle pour les lecteurs', 5), 'col')
-        + row('Couleur', colorIn('color', o.color || L.color) + `<button id="colReset">Couleur du calque</button>`)
+        + row('Couleur', colorIn('color', o.color || L.color) + `<button id="colReset">Couleur du calque</button>`) + heightRow(o)
         + `<div class="btnrow"><button id="chainHere">Repartir de cette bulle</button></div>`;
       break;
     }
@@ -2731,14 +3018,14 @@ function renderPropsTab(b) {
     case 'icon': {
       const cats = S.doc.library.cats;
       h += row('Type', `<select data-k="type">${cats.map(c => `<optgroup label="${esc(c.name)}">${S.doc.library.types.filter(t => t.cat === c.id).map(t => `<option value="${t.id}"${t.id === o.type ? ' selected' : ''}>${esc(t.name)}</option>`).join('')}</optgroup>`).join('')}</select>`)
-        + row('Nom', txtIn('name', o.name, typeById(o.type)?.name || ''), 'col') + row('Description', areaIn('desc', o.desc, 'Texte affiché dans l’info-bulle', 5), 'col')
+        + row('Nom', txtIn('name', o.name, typeById(o.type)?.name || ''), 'col') + row('Description', areaIn('desc', o.desc, 'Texte affiché dans l’info-bulle', 5), 'col') + heightRow(o)
         + `<div class="sub">Image de la fiche</div>${o.img ? `<img class="imgprev" src="${assetHref(o.img)}">` : ''}<div class="btnrow"><button id="icImg">${o.img ? 'Remplacer' : 'Ajouter une image'}…</button>${o.img ? '<button id="icImgDel">Retirer</button>' : ''}</div>`;
       break;
     }
     case 'note':
       h += row('Note', areaIn('text', o.text, 'Commentaire…', 5), 'col')
         + row('Couleur', `<div class="swatches">${['#ffe27a', '#ffb3a7', '#b9f3c2', '#b8dcff', '#e3c7ff'].map(c => `<button data-sw="${c}" style="background:${c}"></button>`).join('')}</div>`)
-        + row('Repliée', chkIn('collapsed', o.collapsed)) + (o.author ? `<div class="kv"><span>Auteur</span><b>${esc(o.author)}</b></div>` : '');
+        + row('Repliée', chkIn('collapsed', o.collapsed)) + heightRow(o) + (o.author ? `<div class="kv"><span>Auteur</span><b>${esc(o.author)}</b></div>` : '');
       break;
   }
   b.innerHTML = h;
@@ -2752,7 +3039,8 @@ function renderPropsTab(b) {
     },
   });
   bindActs(b);
-  $('#editPts', b)?.addEventListener('click', () => { S.vertexEdit = S.vertexEdit === o.id ? null : o.id; setTool('select'); renderTabBody(); scheduleRender(); });
+  $('#editPts', b)?.addEventListener('click', () => { S.sel = new Set([o.id]); S.vertexEdit = o.id; setTool('node'); renderTabBody(); });
+  $('#mkWalls', b)?.addEventListener('click', () => wallsFromShape(o));
   $('#genType', b)?.addEventListener('change', e => { const g = GENS[e.target.value]; Object.assign(o.gen, { type: e.target.value, c: g.c, bg: g.bg }); o.style.stroke = shade(g.bg, -0.35); S.procGen = deep(o.gen); markObj(o); commit(); });
   $('#reseed', b)?.addEventListener('click', () => { o.gen.seed = Math.floor(Math.random() * 9999); markObj(o); commit(); });
   $('#colReset', b)?.addEventListener('click', () => { delete o.color; markObj(o); commit(); });
@@ -3044,12 +3332,25 @@ async function exportImage(o) {
 
 /* ===== Fichiers ===== */
 function newMap() {
+  if (C.session) {
+    openModal('Nouvelle carte', '<p>Où créer la nouvelle carte ?</p><p class="muted">En ligne : enregistrée automatiquement et partageable. Sur cet appareil : remplace la carte locale de ce navigateur (pense à l’enregistrer avant).</p>', {
+      footer: '<button data-close>Annuler</button><button id="nmLocal">Sur cet appareil</button><button class="primary" id="nmCloud">En ligne</button>',
+      mount: m => { $('#nmCloud', m).onclick = () => { closeModal(); newCloudMap(); }; $('#nmLocal', m).onclick = async () => { closeModal(); if (C.mapId) await cloudLeave(true); newLocalMap(); }; },
+    });
+    return;
+  }
   confirmBox('Créer une nouvelle carte ? La carte actuelle reste dans la sauvegarde locale seulement jusqu’à la prochaine modification : enregistre-la d’abord si besoin.', async () => {
     let lib = null; if (IDB.db) { const l = await IDB.get('library'); if (l) try { lib = JSON.parse(l); } catch (e) { } }
     const d = newDoc(lib ? { cats: lib.cats, types: lib.types } : null);
     if (lib?.assets) Object.assign(d.assets, lib.assets);
     S.fileHandle = null; loadDoc(d);
   }, 'Nouvelle carte');
+}
+async function newLocalMap() {
+  let lib = null; if (IDB.db) { const l = await IDB.get('library'); if (l) try { lib = JSON.parse(l); } catch (e) { } }
+  const d = newDoc(lib ? { cats: lib.cats, types: lib.types } : null);
+  if (lib?.assets) Object.assign(d.assets, lib.assets);
+  S.fileHandle = null; S.mode = 'edit'; loadDoc(d); updateCloudUI();
 }
 function docForSave() {
   const used = usedAssets(); const assets = {};
@@ -3083,7 +3384,7 @@ function loadFromText(txt, handle) {
 function loadDoc(d) {
   S.doc = d; S.sel.clear(); S.draft = null; S.flowCur = null; S.vertexEdit = null; S.activeLayer = null; S.measure = null;
   for (const n of layerNodes.values()) n.remove(); layerNodes.clear();
-  procCache.clear(); reconcile(); validateState(); markAllDirty(); histReset();
+  upgradeLibrary(d.library); procCache.clear(); reconcile(); validateState(); markAllDirty(); histReset();
   $('#docName').value = d.name;
   fitView(); applyMode(); scheduleAutosave();
 }
@@ -3220,7 +3521,7 @@ function helpModal() {
 function onKey(e) {
   const tgt = e.target, inField = tgt.matches?.('input, textarea, select, [contenteditable]');
   const mod = e.ctrlKey || e.metaKey, k = e.key.toLowerCase();
-  if (mod && k === 's') { e.preventDefault(); saveDoc(e.shiftKey); return; }
+  if (mod && k === 's') { e.preventDefault(); saveSmart(e.shiftKey); return; }
   if (mod && k === 'o') { e.preventDefault(); openDoc(); return; }
   if (e.key === 'Escape' && $('#modalBg').style.display === 'flex') { closeModal(); return; }
   if (inField) { if (e.key === 'Escape') tgt.blur(); return; }
@@ -3288,6 +3589,7 @@ async function init() {
   $('#bFile').onclick = e => fileMenu(e.currentTarget);
   $('#bUndo').onclick = undo; $('#bRedo').onclick = redo;
   $$('#viewSeg button').forEach(b => b.onclick = () => setViewMode(b.dataset.v));
+  $$('.isorot').forEach(b => b.onclick = () => rotateIso(+b.dataset.r));
   $$('#modeSeg button').forEach(b => b.onclick = () => applyMode(b.dataset.m));
   $('#bGrid').onclick = e => gridPopover(e.currentTarget);
   $('#bHeight').onclick = e => heightPopover(e.currentTarget);
