@@ -46,7 +46,7 @@ input[type=checkbox]{accent-color:var(--accent)}
 #stage{position:absolute;inset:0;width:100%;height:100%;touch-action:none;display:block;user-select:none;cursor:default}
 #stage[data-tool=hand],#stage.space{cursor:grab}
 #stage.panning{cursor:grabbing!important}
-#stage[data-tool=rect],#stage[data-tool=ellipse],#stage[data-tool=polygon],#stage[data-tool=polyline],#stage[data-tool=wall],#stage[data-tool=pen],#stage[data-tool=free],#stage[data-tool=proc],#stage[data-tool=measure],#stage[data-tool=flow],#stage[data-tool=icon],#stage[data-tool=note]{cursor:crosshair}
+#stage[data-tool=rect],#stage[data-tool=ellipse],#stage[data-tool=polygon],#stage[data-tool=polyline],#stage[data-tool=wall],#stage[data-tool=door],#stage[data-tool=pen],#stage[data-tool=free],#stage[data-tool=proc],#stage[data-tool=measure],#stage[data-tool=flow],#stage[data-tool=icon],#stage[data-tool=note]{cursor:crosshair}
 #stage[data-tool=text]{cursor:text}
 #stage[data-tool=select] [data-oid]{cursor:move}
 #stage[data-tool=flow] .bub,#stage[data-tool=icon] .ico,#stage[data-tool=note] .note{cursor:pointer}
@@ -205,6 +205,8 @@ body.m-read #tools .tsep,body.m-comment #tools .tsep{display:none}
 .mrow{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:7px;background:var(--panel2);border:1px solid transparent}
 .mrow.on{border-color:#3d5f8c;background:#2b3a50}
 .mrow .mn{flex:1;display:flex;flex-direction:column;min-width:0}
+code{}
+.opblock{border-left:2px solid var(--line);padding-left:8px;margin:6px 0 10px}
 code{background:var(--panel3);border-radius:4px;padding:0 4px;font-size:12px}
 ::-webkit-scrollbar{width:9px;height:9px}::-webkit-scrollbar-thumb{background:#3a414c;border-radius:5px}::-webkit-scrollbar-track{background:transparent}
 
@@ -271,6 +273,7 @@ code{background:var(--panel3);border-radius:4px;padding:0 4px;font-size:12px}
 <input type="file" id="fileJson" accept=".json,application/json" hidden>
 <input type="file" id="fileLib" accept=".json,application/json" hidden>
 <input type="file" id="fileAny" accept="image/*,.svg" hidden>
+<input type="file" id="fileSvg" accept=".svg,image/svg+xml" hidden>
 <script>
 'use strict';
 /* =====================================================================
@@ -381,7 +384,7 @@ const RAMP = ['#2c7bb6', '#00a6ca', '#00ccbc', '#90eb9d', '#ffff8c', '#f9d057', 
 const SCREEN_KINDS = new Set(['bubble', 'icon', 'note', 'link']);
 const PT_KINDS = new Set(['poly', 'free', 'proc']);
 const BOX_KINDS = new Set(['rect', 'ellipse', 'image']);
-const KIND_LABEL = { rect: 'Rectangle', ellipse: 'Ellipse', poly: 'Ligne / polygone', path: 'Courbe de Bézier', free: 'Tracé libre', text: 'Texte', image: 'Image', proc: 'Zone procédurale', bubble: 'Bulle de flow', link: 'Lien de flow', icon: 'Icône', note: 'Note' };
+const KIND_LABEL = { wall: 'Mur', rect: 'Rectangle', ellipse: 'Ellipse', poly: 'Ligne / polygone', path: 'Courbe de Bézier', free: 'Tracé libre', text: 'Texte', image: 'Image', proc: 'Zone procédurale', bubble: 'Bulle de flow', link: 'Lien de flow', icon: 'Icône', note: 'Note' };
 
 /* ===== Bibliothèque par défaut ===== */
 function defaultLibrary() {
@@ -448,6 +451,14 @@ function migrate(d) {
     if (L.order) L.order = L.order.filter(id => d.objects[id]);
   }
   for (const [id, o] of Object.entries(d.objects)) { if (!d.layers.find(l => l.id === o.layer)) delete d.objects[id]; }
+  const ppuD = d.grid.size / (d.grid.unit || 1);
+  for (const o of Object.values(d.objects)) {
+    if (o.wall && (o.kind === 'poly' || o.kind === 'path')) {
+      const st = o.style || {};
+      o.kind = 'wall'; delete o.wall; o.thick = rd((st.sw || 8) / ppuD); o.align = 'center'; o.openings = [];
+      o.style = { fill: st.stroke || '#4a4f58', fillMode: 'solid', stroke: shade(st.stroke || '#4a4f58', -0.4), sw: 1, dash: 'solid', opacity: st.opacity ?? 1, patScale: 2 };
+    }
+  }
   if (!d.floors.find(f => f.id === d.settings.activeFloor)) d.settings.activeFloor = d.floors[0].id;
   d.bg ||= base.bg; d.name ||= 'Carte'; d.app = 'atelier-cartographe'; d.version = 1;
   return d;
@@ -462,7 +473,8 @@ const S = {
   spaceDown: false, altDown: false, shiftDown: false, exporting: false,
   hiddenTypes: new Set(), hiddenCats: new Set(), showLabels: false,
   toolStyle: { stroke: '#3a3f47', sw: 2, fill: '#d5dce6', fillMode: 'solid', dash: 'solid', opacity: 1, patScale: 2 },
-  wallStyle: { stroke: '#2b2f36', sw: 8, fill: '#d5dce6', fillMode: 'none', dash: 'solid', opacity: 1, join: 'miter', cap: 'square' },
+  wallStyle: { fill: '#4a4f58', fillMode: 'solid', stroke: '#1d2025', sw: 1, dash: 'solid', opacity: 1, patScale: 2 },
+  wallThick: 0.25, wallAlign: 'inside', doorW: 1.2, openKind: 'door', openBot: 0.9, openTop: 2.1,
   procGen: { type: 'foret', density: 1, scale: 1, seed: 1, c: GENS.foret.c, bg: GENS.foret.bg },
   linkStyle: 'critique', textSize: 20, wallH: 3,
   fileHandle: null, clipboard: null, user: '',
@@ -609,7 +621,7 @@ function rotPt(p, c, deg) {
   return [c[0] + dx * cs - dy * sn, c[1] + dx * sn + dy * cs];
 }
 /* ===== Nœuds de Bézier ===== */
-const NODE_KINDS = new Set(['rect', 'ellipse', 'poly', 'path', 'free', 'proc']);
+const NODE_KINDS = new Set(['rect', 'ellipse', 'poly', 'path', 'free', 'proc', 'wall']);
 const cornerNode = p => ({ x: p[0], y: p[1], ix: p[0], iy: p[1], ox: p[0], oy: p[1] });
 function smoothNodesFrom(pts, closed) {
   const n = pts.length;
@@ -642,7 +654,7 @@ function ensureNodes(o) {
   if (o.nodes) return o;
   const nodes = deep(shapeNodes(o)).map(n => { for (const k in n) n[k] = f1(n[k]); return n; });
   const closed = nodesClosed(o);
-  if (o.kind === 'proc') { delete o.pts; o.nodes = nodes; return o; }
+  if (o.kind === 'proc' || o.kind === 'wall') { delete o.pts; o.nodes = nodes; return o; }
   delete o.pts; delete o.cx; delete o.cy; delete o.w; delete o.h; delete o.rot;
   if (o.style) delete o.style.rx;
   o.kind = 'path'; o.nodes = nodes; o.closed = closed;
@@ -723,6 +735,81 @@ function offsetLines(pts, d, closed) {
   }
   return [Lp, Rp];
 }
+/* ===== Murs (bandes) ===== */
+function offsetLine(pts, d, closed) {
+  const n = pts.length, out = [];
+  const nrm = (a, b) => { const dx = b[0] - a[0], dy = b[1] - a[1], l = Math.hypot(dx, dy) || 1; return [-dy / l, dx / l]; };
+  for (let i = 0; i < n; i++) {
+    const hasPrev = closed || i > 0, hasNext = closed || i < n - 1;
+    const n1 = hasPrev ? nrm(pts[(i - 1 + n) % n], pts[i]) : null, n2 = hasNext ? nrm(pts[i], pts[(i + 1) % n]) : null;
+    let m = n1 && n2 ? [n1[0] + n2[0], n1[1] + n2[1]] : (n1 || n2);
+    const ml = Math.hypot(m[0], m[1]) || 1; m = [m[0] / ml, m[1] / ml];
+    const ref = n2 || n1, k = d / Math.max(0.25, m[0] * ref[0] + m[1] * ref[1]);
+    out.push([pts[i][0] + m[0] * k, pts[i][1] + m[1] * k]);
+  }
+  return out;
+}
+/* Ligne centrale aplatie avec repères d'abscisse curviligne par segment */
+function wallLine(o) {
+  const closed = !!o.closed, nodes = shapeNodes(o), n = nodes.length, segs = closed ? n : n - 1;
+  const pts = [[nodes[0].x, nodes[0].y]], cum = [0], segStart = [], segLen = []; let s = 0;
+  for (let i = 0; i < segs; i++) {
+    const a = nodes[i], b = nodes[(i + 1) % n];
+    const straight = a.ox === a.x && a.oy === a.y && b.ix === b.x && b.iy === b.y, steps = straight ? 1 : 14;
+    segStart.push(s); let L = 0, prev = [a.x, a.y];
+    for (let k = 1; k <= steps; k++) { const p = straight ? [b.x, b.y] : cubicAt(a, b, k / steps); const d = dist(prev, p); L += d; s += d; pts.push(p); cum.push(s); prev = p; }
+    segLen.push(L);
+  }
+  return { pts, cum, segStart, segLen, total: s, closed };
+}
+function wallPointAt(W, s) {
+  if (W.closed && W.total) s = ((s % W.total) + W.total) % W.total; else s = clamp(s, 0, W.total);
+  for (let i = 1; i < W.cum.length; i++) if (W.cum[i] >= s) { const a = W.pts[i - 1], b = W.pts[i], L = W.cum[i] - W.cum[i - 1], t = L ? (s - W.cum[i - 1]) / L : 0; return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]; }
+  return W.pts[W.pts.length - 1];
+}
+function wallExtract(W, a, b) { // portion de a à b (b peut dépasser la longueur totale si fermé)
+  const out = [wallPointAt(W, a)];
+  const laps = W.closed ? [0, W.total] : [0];
+  for (const off of laps) for (let i = 1; i < W.cum.length; i++) { const s = W.cum[i] + off; if (s > a + 1e-6 && s < b - 1e-6) out.push(W.pts[i]); }
+  out.push(wallPointAt(W, b));
+  return out.filter((p, i, arr) => i === 0 || dist(p, arr[i - 1]) > 1e-6);
+}
+function wallOpeningRanges(o, W) {
+  const u = ppu();
+  return (o.openings || []).map((op, i) => [op, i]).filter(([op]) => op.seg < W.segLen.length).map(([op, i]) => { const c = W.segStart[op.seg] + clamp(op.c, 0, 1) * W.segLen[op.seg], hw = Math.max(0.05, op.w || 1) * u / 2; const r = [c - hw, c + hw]; r.op = op; r.i = i; return r; })
+    .sort((p, q) => p[0] - q[0]);
+}
+/* Bas et haut d'une ouverture (en m depuis la base du mur) ; porte = bas à 0 */
+function openingSpan(op, H) {
+  const bot = clamp(op.kind === 'window' ? (op.bot ?? 0.9) : 0, 0, H);
+  const top = clamp(isNum(op.top) ? op.top : (op.kind === 'window' ? 2.1 : H), bot, H);
+  return [bot, top];
+}
+/* Portions pleines du mur (les ouvertures coupent la ligne) */
+function wallRuns(o, W = wallLine(o)) {
+  const rs = wallOpeningRanges(o, W);
+  if (!rs.length) return W.closed ? [{ pts: W.pts.slice(0, -1), closed: true }] : [{ pts: W.pts, closed: false }];
+  const m = []; for (const r of rs) { if (m.length && r[0] <= m[m.length - 1][1]) m[m.length - 1][1] = Math.max(m[m.length - 1][1], r[1]); else m.push([...r]); }
+  const runs = [];
+  if (W.closed) { for (let i = 0; i < m.length; i++) { const a = m[i][1], b = i < m.length - 1 ? m[i + 1][0] : m[0][0] + W.total; if (b - a > 0.5) runs.push({ pts: wallExtract(W, a, b), closed: false }); } }
+  else { let a = 0; for (const r of m) { if (r[0] - a > 0.5) runs.push({ pts: wallExtract(W, a, Math.min(r[0], W.total)), closed: false }); a = Math.max(a, r[1]); } if (W.total - a > 0.5) runs.push({ pts: wallExtract(W, a, W.total), closed: false }); }
+  return runs.filter(r => r.pts.length > 1);
+}
+/* Décalages des deux bords selon l'épaisseur et le placement */
+function wallOffsets(o, W = wallLine(o)) {
+  const T = Math.max(0.01, o.thick ?? 0.25) * ppu();
+  let side = 1;
+  if (W.closed && W.pts.length > 3) {
+    const a = W.pts[0], b = W.pts[1], dx = b[0] - a[0], dy = b[1] - a[1], l = Math.hypot(dx, dy) || 1;
+    const m = [(a[0] + b[0]) / 2 - dy / l * 0.5, (a[1] + b[1]) / 2 + dx / l * 0.5];
+    side = pip(m[0], m[1], W.pts.slice(0, -1)) ? 1 : -1;
+  }
+  const al = o.align || 'center';
+  return al === 'inside' ? [0, side * T] : al === 'outside' ? [0, -side * T] : [T / 2, -T / 2];
+}
+function wallEdges(run, offs) { return [offsetLine(run.pts, offs[0], run.closed), offsetLine(run.pts, offs[1], run.closed)]; }
+/* Repère d'une ouverture à partir d'une abscisse globale */
+function wallSegAt(W, s) { for (let i = W.segStart.length - 1; i >= 0; i--) if (s >= W.segStart[i]) return { seg: i, c: W.segLen[i] ? clamp((s - W.segStart[i]) / W.segLen[i], 0, 1) : 0 }; return { seg: 0, c: 0 }; }
 function polyLen(pts) { let l = 0; for (let i = 1; i < pts.length; i++) l += dist(pts[i - 1], pts[i]); return l; }
 
 /* ===== Couleurs ===== */
@@ -1569,6 +1656,7 @@ function gridString() {
 
 /* ===== Objets en coordonnées monde ===== */
 function isClosed(o) { return o.kind === 'rect' || o.kind === 'ellipse' || o.kind === 'proc' || ((o.kind === 'poly' || o.kind === 'path' || o.kind === 'free') && o.closed); }
+function wallFill(o) { const s = o.style || {}; if (!s.fillMode || s.fillMode === 'none') return 'none'; if (s.fillMode === 'solid') return s.fill; return `url(#${ensurePattern(s.fillMode, s.fill, s.patScale)})`; }
 function fillOf(o) {
   const s = o.style || {}, st = S.doc.settings;
   if (st.heightView && isClosed(o) && o.kind !== 'proc' && (isNum(o.elev) || s.fillMode !== 'none')) return heightColor(floorAlt(layerById(o.layer)?.floor) + (o.elev || 0));
@@ -1611,64 +1699,12 @@ function textBox(o) {
   const x0 = o.align === 'middle' ? o.x - w / 2 : o.align === 'end' ? o.x - w : o.x;
   return { x0, y0: o.y - o.size * 0.92, w, h };
 }
-function renderWorld(L) {
-  if (L.type !== 'draw' && L.type !== 'images') return '';
-  let h = ''; const walls = [];
-  for (const id of L.items) { const o = obj(id); if (!o) continue; if (isIso() && o.wall && wallHeight(o) > 0) walls.push(o); else h += objWorld(o); }
-  if (walls.length) h += renderWallsIso(walls);
-  return h;
-}
-/* ===== Murs en volume (vue isométrique) ===== */
-function wallHeight(o) { const h = isNum(o.wallH) ? o.wallH : 3; return S.doc.settings.wallMode === 'low' ? Math.min(h, 0.6) : h; }
-function renderWallsIso(walls) {
-  const st = S.doc.settings, X = S.exporting, F = f1, pieces = [];
-  const P = (pts) => pts.map(p => F(p[0]) + ',' + F(p[1])).join(' ');
-  const add = (p, v) => [p[0] + v[0], p[1] + v[1]];
-  const edge = 'stroke="#000" stroke-opacity=".35" stroke-width="0.8" vector-effect="non-scaling-stroke" stroke-linejoin="round"';
-  for (const o of walls) {
-    const pts = geomPts(o).filter((p, i, a) => i === 0 || dist(p, a[i - 1]) > 0.01); if (pts.length < 2) continue;
-    const closed = !!o.closed && pts.length > 2, n = pts.length, segs = closed ? n : n - 1;
-    const [Lp, Rp] = offsetLines(pts, Math.max(0.5, (o.style?.sw || 8) / 2), closed);
-    const base = o.elev || 0, vb = unproj(0, -liftOfAlt(base)), vt = unproj(0, -liftOfAlt(base + wallHeight(o)));
-    const col = o.style?.stroke || '#2b2f36', baseOp = o.style?.opacity ?? 1;
-    const id = X ? '' : ` data-oid="${o.id}"`;
-    const cen = [pts.reduce((a, p) => a + p[0], 0) / n, pts.reduce((a, p) => a + p[1], 0) / n];
-    const face = (A, B, side) => {
-      const pn = proj(side[0], side[1]); const front = pn[1] > 0.001;
-      const fill = front ? shade(col, 0.16 + 0.14 * Math.sign(pn[0])) : shade(col, -0.25);
-      return { front, svg: `<polygon${id} points="${P([add(A, vb), add(B, vb), add(B, vt), add(A, vt)])}" fill="${fill}" ${edge}/>` };
-    };
-    for (let i = 0; i < segs; i++) {
-      const a = pts[i], b = pts[(i + 1) % n], j = (i + 1) % n;
-      const dx = b[0] - a[0], dy = b[1] - a[1], l = Math.hypot(dx, dy) || 1, nl = [-dy / l, dx / l];
-      const m = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
-      let out = nl;
-      if (closed) { if (pip(m[0] + nl[0] * 0.5, m[1] + nl[1] * 0.5, pts)) out = [-nl[0], -nl[1]]; }
-      else { const c = [m[0] - cen[0], m[1] - cen[1]]; if (Math.hypot(c[0], c[1]) > 0.5 && c[0] * nl[0] + c[1] * nl[1] < 0) out = [-nl[0], -nl[1]]; }
-      const isFront = proj(out[0], out[1])[1] > 0.001;
-      const cut = o.wallCut === 'always' || (o.wallCut !== 'never' && st.wallMode === 'cut' && isFront);
-      const op = rd((cut ? st.wallCutOp : 1) * baseOp);
-      const f1s = face(Lp[i], Lp[j], nl), f2s = face(Rp[j], Rp[i], [-nl[0], -nl[1]]);
-      const [back, frnt] = f1s.front ? [f2s, f1s] : [f1s, f2s];
-      let g = '';
-      if (cut) g += `<polygon${id} points="${P([Lp[i], Lp[j], Rp[j], Rp[i]].map(p => add(p, vb)))}" fill="${col}" fill-opacity="${rd(0.55 * baseOp)}" ${edge}/>`;
-      g += `<g opacity="${op}">${back.svg}${frnt.svg}<polygon${id} points="${P([Lp[i], Lp[j], Rp[j], Rp[i]].map(p => add(p, vt)))}" fill="${shade(col, 0.38)}" ${edge}/></g>`;
-      pieces.push({ depth: proj(m[0], m[1])[1], svg: g });
-    }
-    if (!closed) for (const k of [0, n - 1]) {
-      const g = `<polygon${id} points="${P([add(Lp[k], vb), add(Rp[k], vb), add(Rp[k], vt), add(Lp[k], vt)])}" fill="${shade(col, 0.05)}" ${edge} opacity="${rd(baseOp)}"/>`;
-      pieces.push({ depth: proj(pts[k][0], pts[k][1])[1] + 0.01, svg: g });
-    }
-  }
-  pieces.sort((p, q) => p.depth - q.depth);
-  return pieces.map(p => p.svg).join('');
-}
 function objWorld(o) {
   const s = o.style || {}, F = f1, X = S.exporting;
   const op = s.opacity != null && s.opacity !== 1 ? ` opacity="${s.opacity}"` : '';
   const id = X ? '' : ` data-oid="${o.id}"`;
   const rot = o.rot ? ` transform="rotate(${o.rot} ${F(o.cx)} ${F(o.cy)})"` : '';
-  const hit = (shape) => X ? '' : shape.replace(/^<(\w+)/, `<$1 class="hit"${id}`) ;
+  const hit = shape => X ? '' : shape.replace(/^<(\w+)/, `<$1 class="hit"${id}`);
   let out = '';
   switch (o.kind) {
     case 'rect': out = `<rect${id} x="${F(o.cx - o.w / 2)}" y="${F(o.cy - o.h / 2)}" width="${F(o.w)}" height="${F(o.h)}" rx="${s.rx || 0}"${rot} fill="${fillOf(o)}" ${strokeAttrs(s)}${op} pointer-events="all"/>`; break;
@@ -1688,6 +1724,24 @@ function objWorld(o) {
       break;
     }
     case 'image': out = `<image${id} href="${assetHref(o.asset)}" x="${F(o.cx - o.w / 2)}" y="${F(o.cy - o.h / 2)}" width="${F(o.w)}" height="${F(o.h)}" preserveAspectRatio="none"${rot}${op} pointer-events="all"/>`; break;
+    case 'wall': {
+      const W = wallLine(o); if (W.pts.length < 2) return '';
+      const offs = wallOffsets(o, W), runs = wallRuns(o, W);
+      let d = '';
+      for (const r of runs) { const [A, B] = wallEdges(r, offs); d += r.closed ? `M${ptsStr(A).replace(/ /g, 'L')}ZM${ptsStr(B).replace(/ /g, 'L')}Z` : `M${ptsStr([...A, ...B.reverse()]).replace(/ /g, 'L')}Z`; }
+      out = `<path${id} d="${d}" fill="${wallFill(o)}" fill-rule="evenodd" ${strokeAttrs(s)}${op} pointer-events="all"/>`;
+      const T = Math.max(0.01, o.thick ?? 0.25) * ppu();
+      const wcol = s.fill || '#4a4f58';
+      wallOpeningRanges(o, W).forEach(r => {
+        const seg = wallExtract(W, r[0], r[1]), P = ptsStr(seg).replace(/ /g, 'L');
+        if (r.op.kind === 'window') {
+          const [A, B] = wallEdges({ pts: seg, closed: false }, offs);
+          out += `<path d="M${ptsStr([...A, ...B.reverse()]).replace(/ /g, 'L')}Z" fill="${mix(wcol, '#ffffff', 0.72)}" stroke="${wcol}" stroke-width="${rd(Math.max(0.8, T * 0.08))}" pointer-events="none"/><path d="M${P}" fill="none" stroke="${wcol}" stroke-width="${rd(Math.max(0.6, T * 0.08))}" pointer-events="none"/>`;
+        } else out += `<path d="M${P}" fill="none" stroke="${wcol}" stroke-width="${rd(Math.max(1, T * 0.3))}" stroke-dasharray="${rd(T * 0.6)} ${rd(T * 0.5)}" opacity=".7" pointer-events="none"/>`;
+        if (!X) out += `<path class="hit"${id} data-open="${r.i}" d="M${P}" fill="none" stroke="transparent" stroke-width="14" vector-effect="non-scaling-stroke"/>`;
+      });
+      break;
+    }
     case 'proc': {
       const P = ptsStr(geomPts(o)), cid = 'cp' + o.id + (X ? 'x' : '');
       if (S.doc.settings.heightView) {
@@ -1701,7 +1755,93 @@ function objWorld(o) {
   if (isIso() && isNum(o.elev) && o.elev) { const v = unproj(0, -liftOfAlt(o.elev)); out = `<g transform="translate(${F(v[0])},${F(v[1])})">${out}</g>`; }
   return out;
 }
-
+function isVolume(o) { return o.kind === 'wall' || (o.solid && isClosed(o) && o.kind !== 'text' && o.kind !== 'image'); }
+function renderWorld(L) {
+  if (L.type !== 'draw' && L.type !== 'images') return '';
+  let h = ''; const vols = [];
+  for (const id of L.items) { const o = obj(id); if (!o) continue; if (isIso() && isVolume(o) && wallHeight(o) > 0) vols.push(o); else h += objWorld(o); }
+  if (vols.length) h += renderVolumesIso(vols);
+  return h;
+}
+/* ===== Volumes en vue isométrique : murs (bandes) et formes pleines ===== */
+function wallHeight(o) { const h = isNum(o.wallH) ? o.wallH : 3; return S.doc.settings.wallMode === 'low' ? Math.min(h, 0.6) : h; }
+function renderVolumesIso(list) {
+  const st = S.doc.settings, X = S.exporting, F = f1, pieces = [];
+  const P = pts => pts.map(p => F(p[0]) + ',' + F(p[1])).join(' ');
+  const add = (p, v) => [p[0] + v[0], p[1] + v[1]];
+  const edge = 'stroke="#000" stroke-opacity=".35" stroke-width="0.8" vector-effect="non-scaling-stroke" stroke-linejoin="round"';
+  const faceFill = (col, nrm) => { const pn = proj(nrm[0], nrm[1]); return pn[1] > 0.001 ? shade(col, 0.12 + 0.14 * Math.sign(pn[0])) : shade(col, -0.25); };
+  for (const o of list) {
+    const id = X ? '' : ` data-oid="${o.id}"`, s = o.style || {}, baseOp = s.opacity ?? 1;
+    const base = o.elev || 0, vb = unproj(0, -liftOfAlt(base)), vt = unproj(0, -liftOfAlt(base + wallHeight(o)));
+    const col = s.fillMode && s.fillMode !== 'none' ? s.fill : (s.stroke || '#9aa3ad');
+    const capStroke = s.sw > 0 && s.stroke && s.stroke !== 'none' ? `stroke="${s.stroke}" stroke-width="${s.sw}" stroke-linejoin="round"` : edge;
+    if (o.kind === 'wall') {
+      const W = wallLine(o); if (W.pts.length < 2) continue;
+      const H = wallHeight(o), offs = wallOffsets(o, W), ring = W.closed ? W.pts.slice(0, -1) : W.pts;
+      const cen = [ring.reduce((a, p) => a + p[0], 0) / ring.length, ring.reduce((a, p) => a + p[1], 0) / ring.length];
+      const at = z => unproj(0, -liftOfAlt(base + z));
+      const emit = (run, z0, z1) => {
+        if (z1 - z0 < 0.01) return;
+        const v0 = at(z0), v1 = at(z1);
+        const [A, B] = wallEdges(run, offs), n = run.pts.length, segs = run.closed ? n : n - 1;
+        for (let i = 0; i < segs; i++) {
+          const j = (i + 1) % n, a = run.pts[i], b = run.pts[j];
+          const dx = b[0] - a[0], dy = b[1] - a[1], l = Math.hypot(dx, dy) || 1, nl = [-dy / l, dx / l], m = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+          let out = nl;
+          if (W.closed && ring.length > 2) { if (pip(m[0] + nl[0] * 0.5, m[1] + nl[1] * 0.5, ring)) out = [-nl[0], -nl[1]]; }
+          else { const c = [m[0] - cen[0], m[1] - cen[1]]; if (Math.hypot(c[0], c[1]) > 0.5 && c[0] * nl[0] + c[1] * nl[1] < 0) out = [-nl[0], -nl[1]]; }
+          const isFront = proj(out[0], out[1])[1] > 0.001;
+          const cut = o.wallCut === 'always' || (o.wallCut !== 'never' && st.wallMode === 'cut' && isFront);
+          const op = rd((cut ? st.wallCutOp : 1) * baseOp);
+          const sA = offs[0] >= offs[1] ? nl : [-nl[0], -nl[1]], sB = [-sA[0], -sA[1]];
+          const fa = { pn: proj(sA[0], sA[1])[1], svg: `<polygon${id} points="${P([add(A[i], v0), add(A[j], v0), add(A[j], v1), add(A[i], v1)])}" fill="${faceFill(col, sA)}" ${edge}/>` };
+          const fb = { pn: proj(sB[0], sB[1])[1], svg: `<polygon${id} points="${P([add(B[i], v0), add(B[j], v0), add(B[j], v1), add(B[i], v1)])}" fill="${faceFill(col, sB)}" ${edge}/>` };
+          const [back, frnt] = fa.pn > fb.pn ? [fb, fa] : [fa, fb];
+          let g = '';
+          if (cut && z0 === 0) g += `<polygon${id} points="${P([A[i], A[j], B[j], B[i]].map(p => add(p, vb)))}" fill="${col}" fill-opacity="${rd(0.55 * baseOp)}" ${edge}/>`;
+          g += `<g opacity="${op}">${back.svg}${frnt.svg}<polygon${id} points="${P([A[i], A[j], B[j], B[i]].map(p => add(p, v1)))}" fill="${shade(col, 0.32)}" ${edge}/>`
+            + (z0 > 0 ? `<polygon${id} points="${P([A[i], A[j], B[j], B[i]].map(p => add(p, v0)))}" fill="${shade(col, -0.35)}" ${edge}/>` : '') + `</g>`;
+          pieces.push({ depth: proj(m[0], m[1])[1] + z0 * 1e-4, svg: g });
+        }
+        if (!run.closed) for (const k of [0, n - 1]) {
+          const g = `<polygon${id} points="${P([add(A[k], v0), add(B[k], v0), add(B[k], v1), add(A[k], v1)])}" fill="${shade(col, 0.05)}" ${edge} opacity="${rd(baseOp)}"/>`;
+          pieces.push({ depth: proj(run.pts[k][0], run.pts[k][1])[1] + 0.01, svg: g });
+        }
+      };
+      for (const run of wallRuns(o, W)) emit(run, 0, H);
+      for (const r of wallOpeningRanges(o, W)) {
+        const seg = { pts: wallExtract(W, r[0], r[1]), closed: false }, [bot, top] = openingSpan(r.op, H);
+        emit(seg, 0, bot);          // allège (fenêtre)
+        emit(seg, top, H);          // linteau
+        if (r.op.kind === 'window') {
+          const vg = at((bot + top) / 2), [A, B] = wallEdges(seg, offs), mid = A.map((p, k) => [(p[0] + B[k][0]) / 2, (p[1] + B[k][1]) / 2]);
+          const vb0 = at(bot), vt0 = at(top);
+          pieces.push({ depth: proj(seg.pts[0][0], seg.pts[0][1])[1] + 0.005, svg: `<polygon points="${P([...mid.map(p => add(p, vb0)), ...mid.slice().reverse().map(p => add(p, vt0))])}" fill="#bfe3ff" fill-opacity=".35" stroke="${shade(col, -0.2)}" stroke-width="1" vector-effect="non-scaling-stroke" pointer-events="none"/>` });
+        } else if (bot === 0) pieces.push({ depth: -1e9, svg: `<polyline points="${P(seg.pts.map(p => add(p, vb)))}" fill="none" stroke="${col}" stroke-width="2" stroke-dasharray="5 4" vector-effect="non-scaling-stroke" opacity=".7"/>` });
+      }
+    } else {
+      // forme pleine extrudée : faces du contour + dessus = la forme elle-même
+      const ring = geomPts(o).filter((p, i, a) => i === 0 || dist(p, a[i - 1]) > 0.01); if (ring.length < 3) continue;
+      const n = ring.length; let g = '', back = '', front = '';
+      for (let i = 0; i < n; i++) {
+        const a = ring[i], b = ring[(i + 1) % n], dx = b[0] - a[0], dy = b[1] - a[1], l = Math.hypot(dx, dy) || 1;
+        let out = [-dy / l, dx / l]; const m = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+        if (pip(m[0] + out[0] * 0.5, m[1] + out[1] * 0.5, ring)) out = [-out[0], -out[1]];
+        const ff = faceFill(col, out), seam = n > 8 ? `stroke="${ff}" stroke-width="0.8" vector-effect="non-scaling-stroke"` : edge;
+        const f = `<polygon${id} points="${P([add(a, vb), add(b, vb), add(b, vt), add(a, vt)])}" fill="${ff}" ${seam}/>`;
+        if (proj(out[0], out[1])[1] > 0.001) front += f; else back += f;
+      }
+      const cap = `<g transform="translate(${F(vt[0] - vb[0])},${F(vt[1] - vb[1])})">${objWorld(o)}</g>`;
+      g = back + front + cap;
+      const op = o.wallCut === 'always' ? rd(st.wallCutOp) : 1;
+      const cen = [ring.reduce((a, p) => a + p[0], 0) / n, ring.reduce((a, p) => a + p[1], 0) / n];
+      pieces.push({ depth: proj(cen[0], cen[1])[1], svg: op < 1 ? `<g opacity="${op}">${g}</g>` : g });
+    }
+  }
+  pieces.sort((p, q) => p.depth - q.depth);
+  return pieces.map(p => p.svg).join('');
+}
 /* ===== Objets en coordonnées écran (taille constante) ===== */
 function bubbleR(L) { return L?.size || 14; }
 function linkScreenPts(l) {
@@ -1818,6 +1958,7 @@ function objWorldCorners(o) {
     case 'text': { const b = textBox(o), c = [o.x, o.y]; return [[b.x0, b.y0], [b.x0 + b.w, b.y0], [b.x0 + b.w, b.y0 + b.h], [b.x0, b.y0 + b.h]].map(p => rotPt(p, c, o.rot)); }
     case 'poly': case 'free': return o.pts;
     case 'proc': return geomPts(o);
+    case 'wall': { const W = wallLine(o); if (W.pts.length < 2) return W.pts; const offs = wallOffsets(o, W), r = { pts: W.closed ? W.pts.slice(0, -1) : W.pts, closed: W.closed }; const [A, B] = wallEdges(r, offs); return [...A, ...B]; }
     case 'path': return o.nodes.flatMap(n => [[n.x, n.y], [n.ix, n.iy], [n.ox, n.oy]]);
     case 'link': { const a = obj(o.from), b = obj(o.to); return [a && [a.x, a.y], ...(o.wps || []), b && [b.x, b.y]].filter(Boolean); }
     default: return [[o.x, o.y]];
@@ -2006,6 +2147,7 @@ const TOOLS = [
   { id: 'polygon', key: 'p', label: 'Polygone', g: 1, layer: 'draw', ico: '<path d="M10 3l7 5-2.8 8H5.8L3 8z"/>' },
   { id: 'polyline', key: 'l', label: 'Ligne brisée', g: 1, layer: 'draw', ico: '<path d="M3 15l4-8 5 6 5-9"/>' },
   { id: 'wall', key: 'w', label: 'Mur', g: 1, layer: 'draw', ico: '<path d="M4 16V5h12v7" stroke-width="3.4" stroke-linecap="square"/>' },
+  { id: 'door', key: 'd', label: 'Ouverture (porte / fenêtre) dans un mur', g: 1, layer: 'draw', ico: '<path d="M2.5 15h4M13.5 15h4" stroke-width="3.2" stroke-linecap="square"/><path d="M6.5 15A7 7 0 0 1 13.5 8V15" stroke-dasharray="2 2"/>' },
   { id: 'pen', key: 'b', label: 'Courbe de Bézier', g: 1, layer: 'draw', ico: '<path d="M4 16C5 8 11 5 16 4"/><path d="M2 11l5 0" stroke-width="1.2"/><circle cx="4" cy="16" r="1.7" fill="currentColor"/><circle cx="16" cy="4" r="1.7" fill="currentColor"/>' },
   { id: 'free', key: 'f', label: 'Main levée', g: 1, layer: 'draw', ico: '<path d="M3 13c2-5 4 2 6-3s3-5 5-1 2 3 3 1"/>' },
   { id: 'text', key: 't', label: 'Texte', g: 1, layer: 'draw', ico: '<path d="M4 5h12M10 5v11M7.5 16h5"/>' },
@@ -2024,7 +2166,8 @@ const HINTS = {
   ellipse: 'Glisser pour tracer · Maj : cercle · Alt : sans magnétisme',
   polygon: 'Clic : ajouter un point · Clic sur le 1er point, Entrée ou double-clic : fermer · Retour arrière : retirer le dernier point',
   polyline: 'Clic : ajouter un point · Entrée, double-clic ou clic droit : terminer · Maj : angles à 45°',
-  wall: 'Comme la ligne brisée, en trait épais · Clic sur le 1er point : boucle fermée',
+  wall: 'Trace la ligne d’un mur (bande épaisse) · Clic sur le 1er point : boucle fermée · Entrée ou double-clic : terminer',
+  door: 'Clic sur un mur : percer une porte ou une fenêtre (choix dans la barre) · Alt+clic sur une ouverture : la reboucher · réglages fins dans Propriétés',
   pen: 'Clic : point d’angle · Clic-glisser : point courbe · Clic sur le 1er point : fermer · Entrée : terminer',
   free: 'Glisser pour dessiner à main levée (revenir au départ ferme la forme)',
   text: 'Clic pour poser un texte',
@@ -2122,6 +2265,7 @@ function onDown(e) {
   switch (S.tool) {
     case 'select': return downSelect(e, sp, hi, o);
     case 'node': return downNode(e, sp, hi, o);
+    case 'door': return downDoor(e, sp, hi, o);
     case 'rect': case 'ellipse': return downBox(sp);
     case 'polygon': case 'polyline': case 'wall': case 'proc': return downPoly(sp);
     case 'pen': return downPen(sp);
@@ -2176,7 +2320,7 @@ function downNode(e, sp, hi, o) {
     const lift = objLift(cur);
     const r = nearestOnNodes(shapeNodes(cur), nodesClosed(cur), sp, p => W2S(p[0], p[1], lift));
     if (r.i >= 0 && r.d < 9) {
-      ensureNodes(cur); const k = splitNodes(cur.nodes, r.i, r.t); markObj(cur);
+      ensureNodes(cur); const k = splitNodes(cur.nodes, r.i, r.t); remapOpeningsSplit(cur, r.i, r.t); markObj(cur);
       S.drag = { type: 'vertex', id: cur.id, i: k, O: deep(cur), sp, fresh: true }; return;
     }
   }
@@ -2253,9 +2397,37 @@ function dragResize(d, sp, e) {
   }
   markObj(o); scheduleRender();
 }
+function remapOpeningsSplit(o, i, t) {
+  if (!o.openings?.length) return;
+  const r3 = v => Math.round(v * 1e4) / 1e4;
+  for (const op of o.openings) { if (op.seg > i) op.seg++; else if (op.seg === i) { if (op.c < t) op.c = r3(op.c / (t || 1)); else { op.seg = i + 1; op.c = r3((op.c - t) / ((1 - t) || 1)); } } }
+}
+function remapOpeningsDelete(o, i) {
+  if (!o.openings?.length) return;
+  const n = (o.nodes || o.pts).length + 1, prev = (i - 1 + n) % n;
+  o.openings = o.openings.filter(op => op.seg !== i && op.seg !== prev).map(op => ({ ...op, seg: op.seg > i ? op.seg - 1 : op.seg }));
+}
+/* --- Outil Ouverture --- */
+function downDoor(e, sp, hi, o) {
+  if (S.mode !== 'edit') return;
+  const openEl = e.target.closest?.('[data-open]');
+  if (o && o.kind === 'wall' && openEl && e.altKey) { o.openings.splice(+openEl.dataset.open, 1); S.sel = new Set([o.id]); commit(); toast('Ouverture rebouchée'); return; }
+  let wall = o && o.kind === 'wall' ? o : null, best = null;
+  const cands = wall ? [wall] : Object.values(S.doc.objects).filter(x => x.kind === 'wall' && canEdit(x));
+  for (const w of cands) {
+    const W = wallLine(w), lift = objLift(w), pts = W.pts.map(p => W2S(p[0], p[1], lift));
+    const ns = nearestSeg(pts, sp, false); if (ns.i < 0) continue;
+    if (!best || ns.d < best.d) { const segL = dist(pts[ns.i], pts[ns.i + 1]) || 1; const s = W.cum[ns.i] + (W.cum[ns.i + 1] - W.cum[ns.i]) * (dist(pts[ns.i], ns.q) / segL); best = { w, W, s, d: ns.d }; }
+  }
+  if (!best || (!wall && best.d > 16)) { toast('Clique sur un mur (objet Mur) pour y percer une ouverture'); return; }
+  const at = wallSegAt(best.W, best.s);
+  best.w.openings ||= []; best.w.openings.push(S.openKind === 'window' ? { kind: 'window', seg: at.seg, c: Math.round(at.c * 1e4) / 1e4, w: S.doorW, bot: S.openBot, top: S.openTop } : { kind: 'door', seg: at.seg, c: Math.round(at.c * 1e4) / 1e4, w: S.doorW, top: S.openTop });
+  S.sel = new Set([best.w.id]); S.activeLayer = best.w.layer; commit();
+}
 function deleteVertex(o, i) {
   if (o.pts) { const min = isClosed(o) ? 3 : 2; if (o.pts.length <= min) { toast('Nombre minimal de points atteint'); return; } o.pts.splice(i, 1); }
   else if (o.nodes) { if (o.nodes.length <= (nodesClosed(o) ? 3 : 2)) { toast('Nombre minimal de points atteint'); return; } o.nodes.splice(i, 1); }
+  if (o.kind === 'wall') remapOpeningsDelete(o, i);
   commit();
 }
 
@@ -2284,8 +2456,8 @@ function downPoly(sp) {
     const t = S.tool;
     const o = t === 'proc'
       ? addObject({ kind: 'proc', pts: [w], gen: deep(S.procGen), style: { stroke: shade(S.procGen.bg, -0.35), sw: 1.5, fill: '#000', fillMode: 'none', dash: 'solid', opacity: 1 } }, L.id)
-      : addObject({ kind: 'poly', pts: [w], closed: false, style: deep(t === 'wall' ? S.wallStyle : S.toolStyle) }, L.id);
-    if (t === 'wall') { o.wall = true; o.wallH = S.wallH; }
+      : t === 'wall' ? addObject({ kind: 'wall', pts: [w], closed: false, thick: S.wallThick, align: 'center', openings: [], wallH: S.wallH, style: deep(S.wallStyle) }, L.id)
+      : addObject({ kind: 'poly', pts: [w], closed: false, style: deep(S.toolStyle) }, L.id);
     S.draft = { id: o.id, tool: t, lift }; S.sel = new Set([o.id]); scheduleRender(); return;
   }
   const o = obj(S.draft.id); if (!o) { S.draft = null; return; }
@@ -2533,6 +2705,174 @@ function fitView(pad = 60) {
   scheduleRender(); updateZoomLabel();
 }
 
+/* ===== Import SVG en formes modifiables ===== */
+function svgColor(c) {
+  if (!c || c === 'none' || c === 'transparent') return null;
+  if (c.startsWith('url(')) return { hex: '#b8c2cc', a: 1, grad: true };
+  const m = c.match(/rgba?\(([^)]+)\)/); if (!m) return c[0] === '#' ? { hex: hex6(c), a: 1 } : null;
+  const p = m[1].split(/[\s,/]+/).filter(Boolean).map(parseFloat);
+  const a = p.length > 3 ? p[3] : 1; if (a === 0) return null;
+  return { hex: rgbHex(p[0], p[1], p[2]), a };
+}
+function arcToCubics(x1, y1, rx, ry, phi, fa, fs, x2, y2) {
+  if (!rx || !ry) return [[[x1, y1], [x2, y2], [x2, y2]]];
+  const r = phi * Math.PI / 180, cs = Math.cos(r), sn = Math.sin(r);
+  const dx = (x1 - x2) / 2, dy = (y1 - y2) / 2, xp = cs * dx + sn * dy, yp = -sn * dx + cs * dy;
+  rx = Math.abs(rx); ry = Math.abs(ry);
+  const lam = xp * xp / (rx * rx) + yp * yp / (ry * ry); if (lam > 1) { const s = Math.sqrt(lam); rx *= s; ry *= s; }
+  const num = rx * rx * ry * ry - rx * rx * yp * yp - ry * ry * xp * xp, den = rx * rx * yp * yp + ry * ry * xp * xp;
+  const co = (fa === fs ? -1 : 1) * Math.sqrt(Math.max(0, num / (den || 1)));
+  const cxp = co * rx * yp / ry, cyp = -co * ry * xp / rx;
+  const cx = cs * cxp - sn * cyp + (x1 + x2) / 2, cy = sn * cxp + cs * cyp + (y1 + y2) / 2;
+  const ang = (ux, uy, vx, vy) => Math.atan2(ux * vy - uy * vx, ux * vx + uy * vy);
+  const t1 = ang(1, 0, (xp - cxp) / rx, (yp - cyp) / ry);
+  let dt = ang((xp - cxp) / rx, (yp - cyp) / ry, (-xp - cxp) / rx, (-yp - cyp) / ry);
+  if (!fs && dt > 0) dt -= 2 * Math.PI; else if (fs && dt < 0) dt += 2 * Math.PI;
+  const n = Math.max(1, Math.ceil(Math.abs(dt) / (Math.PI / 2) - 1e-9)), d = dt / n, k = 4 / 3 * Math.tan(d / 4);
+  const P = t => [cx + rx * Math.cos(t) * cs - ry * Math.sin(t) * sn, cy + rx * Math.cos(t) * sn + ry * Math.sin(t) * cs];
+  const D = t => [-rx * Math.sin(t) * cs - ry * Math.cos(t) * sn, -rx * Math.sin(t) * sn + ry * Math.cos(t) * cs];
+  const out = []; let a = t1;
+  for (let i = 0; i < n; i++) { const b = a + d, p0 = P(a), p1 = P(b), d0 = D(a), d1 = D(b); out.push([[p0[0] + k * d0[0], p0[1] + k * d0[1]], [p1[0] - k * d1[0], p1[1] - k * d1[1]], p1]); a = b; }
+  return out;
+}
+/* Analyse un attribut d en sous-tracés de nœuds cubiques (coordonnées absolues) */
+function parsePathD(d) {
+  const toks = String(d || '').match(/[MmLlHhVvCcSsQqTtAaZz]|[-+]?(?:\d*\.\d+|\d+\.?)(?:[eE][-+]?\d+)?/g) || [];
+  const subs = []; let sub = null, i = 0, cmd = null, cx = 0, cy = 0, sx = 0, sy = 0, lc = null, lq = null;
+  const num = () => parseFloat(toks[i++]);
+  const isNumTok = () => i < toks.length && !/^[A-Za-z]$/.test(toks[i]);
+  const start = (x, y) => { sub = { nodes: [cornerNode([x, y])], closed: false }; subs.push(sub); sx = x; sy = y; };
+  const cubic = (c1, c2, p) => { if (!sub) start(cx, cy); const L = sub.nodes[sub.nodes.length - 1]; L.ox = c1[0]; L.oy = c1[1]; sub.nodes.push({ x: p[0], y: p[1], ix: c2[0], iy: c2[1], ox: p[0], oy: p[1] }); cx = p[0]; cy = p[1]; };
+  const line = (x, y) => cubic([cx, cy], [x, y], [x, y]);
+  while (i < toks.length) {
+    if (/^[A-Za-z]$/.test(toks[i])) cmd = toks[i++];
+    else if (!cmd) { i++; continue; }
+    const rel = cmd === cmd.toLowerCase() && cmd !== 'z' ? true : false, C = cmd.toUpperCase();
+    const ox = rel ? cx : 0, oy = rel ? cy : 0;
+    if (C === 'Z') {
+      if (sub) { sub.closed = true; const f = sub.nodes[0], l = sub.nodes[sub.nodes.length - 1]; if (sub.nodes.length > 1 && Math.hypot(f.x - l.x, f.y - l.y) < 1e-6) { f.ix = l.ix; f.iy = l.iy; sub.nodes.pop(); } }
+      cx = sx; cy = sy; sub = null; lc = lq = null; continue;
+    }
+    if (!isNumTok()) { continue; }
+    switch (C) {
+      case 'M': { const x = num() + ox, y = num() + oy; start(x, y); cx = x; cy = y; cmd = rel ? 'l' : 'L'; lc = lq = null; break; }
+      case 'L': line(num() + ox, num() + oy); lc = lq = null; break;
+      case 'H': line(num() + ox, cy); lc = lq = null; break;
+      case 'V': line(cx, num() + oy); lc = lq = null; break;
+      case 'C': { const c1 = [num() + ox, num() + oy], c2 = [num() + ox, num() + oy], p = [num() + ox, num() + oy]; cubic(c1, c2, p); lc = c2; lq = null; break; }
+      case 'S': { const c1 = lc ? [2 * cx - lc[0], 2 * cy - lc[1]] : [cx, cy]; const c2 = [num() + ox, num() + oy], p = [num() + ox, num() + oy]; cubic(c1, c2, p); lc = c2; lq = null; break; }
+      case 'Q': case 'T': {
+        const q = C === 'Q' ? [num() + ox, num() + oy] : (lq ? [2 * cx - lq[0], 2 * cy - lq[1]] : [cx, cy]);
+        const p = [num() + ox, num() + oy], p0 = [cx, cy];
+        cubic([p0[0] + 2 / 3 * (q[0] - p0[0]), p0[1] + 2 / 3 * (q[1] - p0[1])], [p[0] + 2 / 3 * (q[0] - p[0]), p[1] + 2 / 3 * (q[1] - p[1])], p); lq = q; lc = null; break;
+      }
+      case 'A': {
+        const rx = num(), ry = num(), phi = num(), fa = num() ? 1 : 0, fs = num() ? 1 : 0, x = num() + ox, y = num() + oy;
+        for (const [c1, c2, p] of arcToCubics(cx, cy, rx, ry, phi, fa, fs, x, y)) cubic(c1, c2, p);
+        lc = lq = null; break;
+      }
+      default: i++;
+    }
+  }
+  return subs.filter(s => s.nodes.length > 1);
+}
+function elementSubpaths(el) {
+  const g = n => parseFloat(el.getAttribute(n)) || 0;
+  switch (el.tagName.toLowerCase()) {
+    case 'path': return parsePathD(el.getAttribute('d'));
+    case 'rect': { const x = g('x'), y = g('y'), w = g('width'), h = g('height'); if (!w || !h) return []; return [{ nodes: [[x, y], [x + w, y], [x + w, y + h], [x, y + h]].map(cornerNode), closed: true }]; }
+    case 'circle': case 'ellipse': {
+      const cx = g('cx'), cy = g('cy'), rx = el.tagName.toLowerCase() === 'circle' ? g('r') : g('rx'), ry = el.tagName.toLowerCase() === 'circle' ? g('r') : g('ry');
+      if (!rx || !ry) return [];
+      return [{ nodes: shapeNodes({ kind: 'ellipse', cx, cy, w: 2 * rx, h: 2 * ry, rot: 0 }).map(n => ({ ...n })), closed: true }];
+    }
+    case 'line': return [{ nodes: [cornerNode([g('x1'), g('y1')]), cornerNode([g('x2'), g('y2')])], closed: false }];
+    case 'polyline': case 'polygon': {
+      const v = (el.getAttribute('points') || '').trim().split(/[\s,]+/).map(parseFloat); const pts = [];
+      for (let k = 0; k + 1 < v.length; k += 2) pts.push([v[k], v[k + 1]]);
+      return pts.length > 1 ? [{ nodes: pts.map(cornerNode), closed: el.tagName.toLowerCase() === 'polygon' }] : [];
+    }
+  }
+  return [];
+}
+async function importSVGShapes(text, atScreen, name = 'SVG') {
+  if (S.mode !== 'edit') { toast('Passe en mode Édition pour importer'); return; }
+  const parsed = new DOMParser().parseFromString(text, 'image/svg+xml');
+  if (parsed.querySelector('parsererror') || parsed.documentElement.tagName.toLowerCase() !== 'svg') { toast('Fichier SVG illisible'); return; }
+  // Nettoyage : rien d'exécutable, pas d'images ni de contenu HTML
+  parsed.querySelectorAll('script,foreignObject,image,iframe').forEach(e => e.remove());
+  parsed.querySelectorAll('*').forEach(e => [...e.attributes].forEach(a => { if (/^on/i.test(a.name) || /^(xlink:)?href$/i.test(a.name) && !/^#/.test(a.value)) e.removeAttribute(a.name); }));
+  const host = document.createElement('div');
+  host.style.cssText = 'position:fixed;left:-20000px;top:0;width:1000px;height:1000px;opacity:0;pointer-events:none';
+  const root = document.importNode(parsed.documentElement, true);
+  if (!root.getAttribute('width') && !root.getAttribute('viewBox')) { root.setAttribute('width', '1000'); root.setAttribute('height', '1000'); }
+  host.appendChild(root); document.body.appendChild(host);
+  const items = []; let skipped = 0, grads = 0;
+  try {
+    const els = [...root.querySelectorAll('path,rect,circle,ellipse,line,polyline,polygon,text')].filter(e => !e.closest('defs,clipPath,mask,symbol,pattern,marker'));
+    for (const el of els) {
+      const cs = getComputedStyle(el);
+      if (cs.display === 'none' || cs.visibility === 'hidden' || el.closest('[visibility=hidden],[display=none]')) continue;
+      const M = el.getCTM(); if (!M) { skipped++; continue; }
+      const T = (x, y) => [M.a * x + M.c * y + M.e, M.b * x + M.d * y + M.f];
+      const k = Math.sqrt(Math.abs(M.a * M.d - M.b * M.c)) || 1;
+      const op = (parseFloat(cs.opacity) || 1);
+      if (el.tagName.toLowerCase() === 'text') {
+        const t = el.textContent.trim(); if (!t) continue;
+        const fill = svgColor(cs.fill) || { hex: '#222222', a: 1 };
+        const p = T(parseFloat(el.getAttribute('x')) || 0, parseFloat(el.getAttribute('y')) || 0);
+        items.push({ kind: 'text', x: p[0], y: p[1], text: t, size: (parseFloat(cs.fontSize) || 16) * k, color: fill.hex, bold: parseInt(cs.fontWeight) >= 600, align: { middle: 'middle', end: 'end' }[cs.textAnchor] || 'start', halo: false, rot: 0, style: { opacity: rd(op * fill.a) } });
+        continue;
+      }
+      const fill = svgColor(cs.fill), stroke = svgColor(cs.stroke);
+      if (fill?.grad) grads++;
+      const sw = stroke ? (parseFloat(cs.strokeWidth) || 1) * k : 0;
+      for (const sp of elementSubpaths(el)) {
+        const nodes = sp.nodes.map(n => { const a = T(n.x, n.y), i = T(n.ix, n.iy), o = T(n.ox, n.oy); return { x: a[0], y: a[1], ix: i[0], iy: i[1], ox: o[0], oy: o[1] }; });
+        const closed = sp.closed || (fill && el.tagName.toLowerCase() === 'path' && nodes.length > 2 && !stroke);
+        const style = {
+          stroke: stroke ? stroke.hex : '#000000', sw: rd(sw), dash: cs.strokeDasharray && cs.strokeDasharray !== 'none' ? 'dash' : 'solid',
+          fill: fill ? fill.hex : '#cccccc', fillMode: fill && closed ? 'solid' : 'none', opacity: rd(op * Math.max(fill?.a ?? 1, stroke ? stroke.a : 0) || op), patScale: 2,
+        };
+        if (!fill && !stroke) continue;
+        const straight = nodes.every(n => n.ix === n.x && n.iy === n.y && n.ox === n.x && n.oy === n.y);
+        items.push(straight ? { kind: 'poly', pts: nodes.map(n => [n.x, n.y]), closed, style } : { kind: 'path', nodes, closed, style });
+      }
+    }
+  } finally { host.remove(); }
+  if (!items.length) { toast('Aucune forme exploitable dans ce SVG'); return; }
+  if (items.length > 3000) { toast(`Ce SVG contient ${items.length} formes : import limité aux 3000 premières`, 4000); items.length = 3000; }
+  // Mise à l'échelle : la moitié de la vue, centrée sur le point de dépôt
+  const all = items.flatMap(o => o.kind === 'text' ? [[o.x, o.y]] : o.pts || o.nodes.flatMap(n => [[n.x, n.y]]));
+  const [x0, y0, x1, y1] = bboxOf(all), bw = (x1 - x0) || 1, bh = (y1 - y0) || 1;
+  const L = targetLayerFor('draw'), lift = layerLift(L);
+  const c = atScreen ? S2W(atScreen[0], atScreen[1], lift) : S2W(S.vw / 2, S.vh / 2, lift);
+  const s = (0.5 * Math.min(S.vw, S.vh) / S.view.z) / Math.max(bw, bh);
+  const P = (x, y) => [f1(c[0] + (x - (x0 + x1) / 2) * s), f1(c[1] + (y - (y0 + y1) / 2) * s)];
+  const ids = [];
+  for (const o of items) {
+    if (o.kind === 'text') { [o.x, o.y] = P(o.x, o.y); o.size = Math.max(4, rd(o.size * s)); }
+    else {
+      o.style.sw = rd(o.style.sw * s);
+      if (o.pts) o.pts = o.pts.map(p => P(p[0], p[1]));
+      else o.nodes = o.nodes.map(n => { const a = P(n.x, n.y), i = P(n.ix, n.iy), q = P(n.ox, n.oy); return { x: a[0], y: a[1], ix: i[0], iy: i[1], ox: q[0], oy: q[1] }; });
+    }
+    ids.push(addObject(o, L.id).id);
+  }
+  S.sel = new Set(ids); setTool('select'); commit();
+  toast(`${name} : ${ids.length} forme(s) importée(s) dans « ${L.name} »${grads ? ' · dégradés remplacés par une couleur unie' : ''}${skipped ? ` · ${skipped} élément(s) ignoré(s)` : ''}`, 4500);
+}
+function askSvgImport(files, atScreen) {
+  const f = files[0];
+  openModal('Importer un SVG', `<p>Comment importer <b>${esc(files.length > 1 ? files.length + ' fichiers SVG' : f.name)}</b> ?</p><p class="muted"><b>Formes modifiables</b> : chaque tracé devient une forme (nœuds, couleurs, murs…). Les trous des tracés composés et les dégradés ne sont pas conservés.<br><b>Image</b> : rendu exact, mais non modifiable.</p>`, {
+    footer: `<button data-close>Annuler</button><button id="svgImg">Comme image</button><button class="primary" id="svgShapes">Formes modifiables</button>`,
+    mount: m => {
+      $('#svgImg', m).onclick = () => { closeModal(); importImages(files, atScreen, true); };
+      $('#svgShapes', m).onclick = async () => { closeModal(); for (const file of files) await importSVGShapes(await readFileAsText(file), atScreen, file.name); };
+    },
+  });
+}
+
 /* ===== Petits composants ===== */
 const EYE = '<svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M1.5 10S5 4 10 4s8.5 6 8.5 6-3.5 6-8.5 6S1.5 10 1.5 10z"/><circle cx="10" cy="10" r="2.6"/></svg>';
 const EYE_OFF = '<svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 3l14 14M8 5.2A8 8 0 0 1 10 5c5 0 8.5 5 8.5 5a14 14 0 0 1-2.4 2.8M5.3 6.6C3 8.2 1.5 10 1.5 10S5 15 10 15c1.2 0 2.3-.3 3.3-.7"/></svg>';
@@ -2629,18 +2969,19 @@ const STYLED_SHAPE = o => o && o.style && ['rect', 'ellipse', 'poly', 'path', 'f
 function renderToolOptions() {
   const t = S.tool; let box = '';
   const shape = ['rect', 'ellipse', 'polygon', 'polyline', 'pen', 'free', 'node'].includes(t);
-  const selShapes = selObjs().filter(o => STYLED_SHAPE(o) && canEdit(o));
-  const selWalls = selShapes.filter(o => o.wall), selPlain = selShapes.filter(o => !o.wall);
+  const selPlain = selObjs().filter(o => STYLED_SHAPE(o) && canEdit(o));
+  const selWalls = selObjs().filter(o => o.kind === 'wall' && canEdit(o));
   let styleTargets = [], defaults = null;
   if (S.mode === 'edit') {
     if ((shape || t === 'select') && (selPlain.length || (shape && t !== 'node'))) {
       const src = selPlain[0]?.style || S.toolStyle;
       styleTargets = selPlain; defaults = S.toolStyle;
       box = `${selPlain.length ? `<span class="muted">${selPlain.length > 1 ? selPlain.length + ' formes' : 'Forme'}</span>` : ''}<label>Trait ${colorIn('stroke', src.stroke)}</label><label>${numIn('sw', src.sw, 'min="0" step="0.5" style="width:52px"')}</label><label>Remplissage ${selIn('fillMode', src.fillMode || 'none', FILL_MODES)} ${colorIn('fill', src.fill)}</label>${src.fillMode && src.fillMode !== 'none' && src.fillMode !== 'solid' ? `<label>Motif ${rangeIn('patScale', src.patScale ?? 2, 0.5, 8, 0.25)}</label>` : ''}`;
-    } else if (t === 'wall' || ((t === 'select' || t === 'node') && selWalls.length)) {
-      const src = selWalls[0]?.style || S.wallStyle;
+    } else if (t === 'wall' || t === 'door' || ((t === 'select' || t === 'node') && selWalls.length)) {
+      const w0 = selWalls[0], src = w0?.style || S.wallStyle, U = esc(S.doc.grid.unitName);
       styleTargets = selWalls; defaults = S.wallStyle;
-      box = `${selWalls.length ? '<span class="muted">Mur</span>' : ''}<label>Mur ${colorIn('stroke', src.stroke)}</label><label>Épaisseur ${numIn('sw', src.sw, 'min="1" step="1" style="width:52px"')}</label><label>Hauteur ${numIn('wallH', selWalls[0] ? (selWalls[0].wallH ?? 3) : S.wallH, 'min="0" step="0.5" style="width:52px"')} ${esc(S.doc.grid.unitName)}</label>`;
+      box = t === 'door' ? `<label>Type ${selIn('openKind', S.openKind, { door: 'Porte', window: 'Fenêtre' })}</label><label>Largeur ${numIn('doorW', S.doorW, 'min="0.1" step="0.1" style="width:52px"')}</label>${S.openKind === 'window' ? `<label>Bas ${numIn('openBot', S.openBot, 'min="0" step="0.1" style="width:52px"')}</label>` : ''}<label>Haut ${numIn('openTop', S.openTop, 'min="0" step="0.1" style="width:52px"')} ${U}</label>`
+        : `${selWalls.length ? '<span class="muted">Mur</span>' : ''}<label>Mur ${colorIn('fill', src.fill)}</label><label>Contour ${colorIn('stroke', src.stroke)}</label><label>Épaisseur ${numIn('thick', w0 ? (w0.thick ?? 0.25) : S.wallThick, 'min="0.01" step="0.05" style="width:58px"')} ${U}</label><label>Hauteur ${numIn('wallH', w0 ? (w0.wallH ?? 3) : S.wallH, 'min="0" step="0.5" style="width:52px"')} ${U}</label>`;
     }
     else if (t === 'proc') box = `<label>Motif ${selIn('type', S.procGen.type, Object.fromEntries(Object.entries(GENS).map(([k, v]) => [k, v.label])))}</label><label>Densité ${rangeIn('density', S.procGen.density, 0.2, 3, 0.1)}</label>`;
     else if (t === 'text') box = `<label>Taille ${numIn('size', S.textSize, 'min="4" step="1" style="width:56px"')}</label>`;
@@ -2663,6 +3004,10 @@ function renderToolOptions() {
       const v = read();
       if (k === 'size') { S.textSize = v; return; }
       if (k === 'linkStyle') { S.linkStyle = v; return; }
+      if (k === 'doorW') { if (isNum(v) && v > 0) S.doorW = v; return; }
+      if (k === 'openKind') { S.openKind = v; return; }
+      if (k === 'openBot' || k === 'openTop') { if (isNum(v) && v >= 0) S[k] = v; return; }
+      if (k === 'thick') { if (isNum(v) && v > 0) { S.wallThick = v; for (const o of styleTargets) { o.thick = v; markObj(o); } scheduleRender(); } return; }
       if (defaults) {
         if (k === 'wallH') { if (isNum(v)) { S.wallH = v; for (const o of styleTargets) { o.wallH = v; markObj(o); } } }
         else { if (k === 'sw' && !isNum(v)) return; defaults[k] = v; for (const o of styleTargets) { o.style[k] = v; markObj(o); } }
@@ -2671,7 +3016,7 @@ function renderToolOptions() {
       if (target) { target[k] = v; if (t === 'proc' && k === 'type') { S.procGen.c = GENS[v].c; S.procGen.bg = GENS[v].bg; } }
     };
     el.addEventListener('input', ap);
-    el.addEventListener('change', () => { ap(); if (styleTargets.length) commit(); else if (k === 'fillMode') renderToolOptions(); });
+    el.addEventListener('change', () => { ap(); if (styleTargets.length) commit(); else if (k === 'fillMode' || k === 'openKind') renderToolOptions(); });
   });
   $('#endChain', root)?.addEventListener('click', () => { S.flowCur = null; renderToolOptions(); scheduleRender(); });
 }
@@ -2694,11 +3039,11 @@ function fileMenu(anchor) {
   openPopover(anchor, head + mi('maps', 'Mes cartes…') + mi('new', 'Nouvelle carte…', '', 'edit-only')
     + (online ? mi('save', 'Synchroniser maintenant', 'Ctrl+S') + mi('publish', 'Enregistrer une copie en ligne…') : mi('save', logged ? 'Enregistrer en ligne' : 'Enregistrer (fichier .json)', 'Ctrl+S'))
     + '<hr>' + mi('open', 'Ouvrir un fichier .json…', 'Ctrl+O') + mi('saveas', 'Télécharger une copie (.json)…', 'Ctrl+Maj+S') + '<hr>' +
-    mi('img', 'Importer des images…', '', 'edit-only') + '<hr>' + mi('png', 'Exporter en image (PNG / SVG)…') + mi('script', 'Exporter le script du flow (.md)') + '<hr>' +
+    mi('img', 'Importer des images…', '', 'edit-only') + mi('svg', 'Importer un SVG en formes modifiables…', '', 'edit-only') + '<hr>' + mi('png', 'Exporter en image (PNG / SVG)…') + mi('script', 'Exporter le script du flow (.md)') + '<hr>' +
     mi('libexp', 'Exporter la bibliothèque d’icônes') + mi('libimp', 'Importer une bibliothèque d’icônes…', '', 'edit-only'), p => {
       $$('[data-mi]', p).forEach(b => b.onclick = () => {
         closePopover();
-        ({ maps: () => C.session ? mapsModal() : ensureLogged(mapsModal), publish: () => publishMap(), new: newMap, open: openDoc, save: () => saveSmart(false), saveas: () => saveDoc(true), img: () => $('#fileImg').click(), png: exportModal, script: exportScript, libexp: exportLibrary, libimp: () => $('#fileLib').click() })[b.dataset.mi]();
+        ({ maps: () => C.session ? mapsModal() : ensureLogged(mapsModal), publish: () => publishMap(), new: newMap, open: openDoc, save: () => saveSmart(false), saveas: () => saveDoc(true), img: () => $('#fileImg').click(), svg: () => pickFile('#fileSvg', async f => importSVGShapes(await readFileAsText(f), null, f.name)), png: exportModal, script: exportScript, libexp: exportLibrary, libimp: () => $('#fileLib').click() })[b.dataset.mi]();
       });
     });
 }
@@ -2912,36 +3257,38 @@ function focusPropField(k, select) {
 function selObjs() { return [...S.sel].map(obj).filter(Boolean); }
 function styleSection(o, isWall) {
   const s = o.style || {};
-  let h = row(isWall ? 'Mur' : 'Trait', colorIn('style.stroke', s.stroke) + numIn('style.sw', s.sw, 'min="0" step="0.5"') + (isWall ? '' : selIn('style.dash', s.dash || 'solid', { solid: 'Plein', dash: 'Tirets', dot: 'Points' })));
-  if (o.kind !== 'text' && o.kind !== 'image' && (isClosed(o) || o.kind === 'rect' || o.kind === 'ellipse')) {
-    h += row('Remplissage', selIn('style.fillMode', s.fillMode || 'none', FILL_MODES).replace('<select', '<select data-rebuild') + colorIn('style.fill', s.fill));
+  const wall = o.kind === 'wall';
+  let h = row(wall ? 'Contour' : 'Trait', colorIn('style.stroke', s.stroke) + numIn('style.sw', s.sw, 'min="0" step="0.5"') + selIn('style.dash', s.dash || 'solid', { solid: 'Plein', dash: 'Tirets', dot: 'Points' }));
+  if (o.kind !== 'text' && o.kind !== 'image' && (wall || isClosed(o) || o.kind === 'rect' || o.kind === 'ellipse')) {
+    h += row(wall ? 'Matière du mur' : 'Remplissage', selIn('style.fillMode', s.fillMode || 'none', FILL_MODES).replace('<select', '<select data-rebuild') + colorIn('style.fill', s.fill));
     if (s.fillMode && s.fillMode !== 'none' && s.fillMode !== 'solid') h += row('Taille du motif', rangeIn('style.patScale', s.patScale ?? 2, 0.5, 8, 0.25));
   }
   h += row('Opacité', rangeIn('style.opacity', s.opacity ?? 1, 0, 1, 0.05));
   return h;
 }
 function heightRow(o) { return row('Hauteur au sol', numIn('elev', o.elev, 'step="0.5" placeholder="0"') + `<span class="u">${esc(S.doc.grid.unitName)} (depuis l’étage)</span>`); }
-function wallSection(o) {
-  const U = esc(S.doc.grid.unitName);
-  return `<div class="sub">Mur</div>` + row('Hauteur du mur', numIn('wallH', o.wallH ?? 3, 'min="0" step="0.5"') + `<span class="u">${U}</span>`)
-    + row('Coupe en iso', selIn('wallCut', o.wallCut || 'auto', { auto: 'Automatique', never: 'Jamais coupé', always: 'Toujours coupé' }))
-    + `<p class="muted">En vue isométrique, le mur est dessiné en volume. « Automatique » rend transparents les pans tournés vers toi (réglage dans Hauteurs ▾).</p>`;
+function volumeSection(o) {
+  const U = esc(S.doc.grid.unitName), wall = o.kind === 'wall';
+  return `<div class="sub">${wall ? 'Mur' : 'Volume'}</div>` + row(wall ? 'Hauteur du mur' : 'Hauteur du volume', numIn('wallH', o.wallH ?? 3, 'min="0" step="0.5"') + `<span class="u">${U}</span>`)
+    + row('Coupe en iso', wall ? selIn('wallCut', o.wallCut || 'auto', { auto: 'Automatique', never: 'Jamais coupé', always: 'Toujours coupé' }) : selIn('wallCut', o.wallCut === 'always' ? 'always' : 'never', { never: 'Jamais transparent', always: 'Toujours transparent' }))
+    + `<p class="muted">${wall ? 'En iso, « Automatique » rend transparents les pans tournés vers toi (réglage dans Hauteurs ▾).' : 'En iso, la forme entière est extrudée : son remplissage devient le dessus du volume, son contour reste décoratif.'}</p>`;
 }
+function solidRow(o) { return isClosed(o) ? row('Volume (mur plein)', chkIn('solid', o.solid, 'data-rebuild')) + (o.solid ? volumeSection(o) : '') : ''; }
 function shapeTools(o) {
-  return `<div class="btnrow"><button id="editPts" title="Outil Édition des nœuds (A)">Éditer les nœuds</button>${o.wall ? '' : '<button id="mkWalls" title="Crée un nouvel objet mur qui suit ce contour">Créer des murs depuis ce contour</button>'}</div>`;
+  return `<div class="btnrow"><button id="editPts" title="Outil Édition des nœuds (A)">Éditer les nœuds</button>${o.kind === 'wall' ? '<button id="toDoor" title="Outil Ouverture (D)">Percer une ouverture</button>' : '<button id="mkWalls" title="Crée un nouvel objet Mur qui suit ce contour">Créer un mur depuis ce contour</button>'}</div>`;
 }
 function wallsFromShape(o) {
   const L = layerById(o.layer); if (!L) return;
   const closed = nodesClosed(o);
   let w;
-  if (o.kind === 'rect' || (o.pts && o.kind !== 'free')) w = { kind: 'poly', pts: (o.kind === 'rect' ? shapeNodes(o).map(n => [n.x, n.y]) : deep(o.pts)).map(p => [f1(p[0]), f1(p[1])]), closed };
-  else w = { kind: 'path', nodes: deep(shapeNodes(o)), closed };
-  Object.assign(w, { wall: true, wallH: S.wallH, style: deep(S.wallStyle) });
+  if (o.kind === 'rect' || (o.pts && o.kind !== 'free')) w = { kind: 'wall', pts: (o.kind === 'rect' ? shapeNodes(o).map(n => [n.x, n.y]) : deep(o.pts)).map(p => [f1(p[0]), f1(p[1])]), closed };
+  else w = { kind: 'wall', nodes: deep(shapeNodes(o)), closed };
+  Object.assign(w, { thick: S.wallThick, align: closed ? S.wallAlign : 'center', openings: [], wallH: S.wallH, style: deep(S.wallStyle) });
   if (isNum(o.elev)) w.elev = o.elev;
   const at = L.items.indexOf(o.id) + 1;
   addObject(w, L.id, at);
   S.sel = new Set([w.id]); S.vertexEdit = null; commit();
-  toast('Mur créé à partir du contour (objet indépendant)');
+  toast('Mur créé à partir du contour (objet indépendant, placé à l’intérieur)');
 }
 function renderPropsTab(b) {
   const objs = selObjs(); const ro = S.mode !== 'edit';
@@ -2964,19 +3311,35 @@ function renderPropsTab(b) {
     bindActs(b); return;
   }
   const o = objs[0], L = layerById(o.layer);
-  let h = `<div class="ph"><span class="pk">${KIND_LABEL[o.kind] || o.kind}${o.wall ? ' (mur)' : ''}</span><span class="pl">${esc(L?.name)}</span></div>`;
+  let h = `<div class="ph"><span class="pk">${KIND_LABEL[o.kind] || o.kind}${o.solid && isClosed(o) ? ' (volume)' : ''}</span><span class="pl">${esc(L?.name)}</span></div>`;
   if (!ro || o.kind === 'note') h += `<div class="acts"><button data-act="dup" title="Dupliquer (Ctrl+D)">⧉</button><button data-act="front" title="Premier plan (Maj+])">⤒</button><button data-act="up" title="Avancer (])">↑</button><button data-act="down" title="Reculer ([)">↓</button><button data-act="back" title="Arrière-plan (Maj+[)">⤓</button><button data-act="del" class="danger" title="Supprimer (Suppr)">🗑</button></div>`;
   const U = S.doc.grid.unitName;
   switch (o.kind) {
     case 'rect': case 'ellipse':
-      h += styleSection(o) + (o.kind === 'rect' ? row('Arrondi', numIn('style.rx', o.style.rx || 0, 'min="0" step="1"')) : '') + row('Rotation', numIn('rot', o.rot || 0, 'step="5"') + '<span class="u">°</span>') + heightRow(o);
+      h += styleSection(o) + (o.kind === 'rect' ? row('Arrondi', numIn('style.rx', o.style.rx || 0, 'min="0" step="1"')) : '') + row('Rotation', numIn('rot', o.rot || 0, 'step="5"') + '<span class="u">°</span>') + heightRow(o) + solidRow(o);
       h += `<div class="kv"><span>Dimensions</span><b>${fmtLen(o.w)} × ${fmtLen(o.h)}</b></div>` + shapeTools(o); break;
     case 'poly': case 'free': case 'path': {
-      h += styleSection(o, o.wall) + row('Fermé', chkIn('closed', o.closed, 'data-rebuild')) + row('Mur', chkIn('wall', o.wall, 'data-rebuild')) + heightRow(o);
-      if (o.wall) h += wallSection(o);
+      h += styleSection(o) + row('Fermé', chkIn('closed', o.closed, 'data-rebuild')) + heightRow(o) + solidRow(o);
       const pts = geomPts(o);
       const len = polyLen(o.closed ? [...pts, pts[0]] : pts);
       h += `<div class="kv"><span>${o.closed ? 'Périmètre' : 'Longueur'}</span><b>${fmtLen(len)}</b></div>` + shapeTools(o);
+      break;
+    }
+    case 'wall': {
+      const W = wallLine(o), closed = !!o.closed;
+      h += styleSection(o)
+        + row('Épaisseur', numIn('thick', o.thick ?? 0.25, 'min="0.01" step="0.05"') + `<span class="u">${esc(U)}</span>`)
+        + row('Placement', selIn('align', o.align || 'center', closed ? { inside: 'À l’intérieur du tracé', center: 'Centré sur le tracé', outside: 'À l’extérieur du tracé' } : { inside: 'D’un côté du tracé', center: 'Centré sur le tracé', outside: 'De l’autre côté' }))
+        + row('Fermé', chkIn('closed', o.closed, 'data-rebuild')) + heightRow(o) + volumeSection(o);
+      const Hm = o.wallH ?? 3;
+      h += `<div class="sub">Ouvertures (${(o.openings || []).length})</div>` + ((o.openings || []).map((op, i) => {
+        const win = op.kind === 'window', [bot, top] = openingSpan(op, Hm);
+        return `<div class="opblock">` + row(`${win ? 'Fenêtre' : 'Porte'} ${i + 1}`, selIn(`openings.${i}.kind`, win ? 'window' : 'door', { door: 'Porte', window: 'Fenêtre' }).replace('<select', '<select data-rebuild') + `<button data-opdel="${i}" class="danger" title="Reboucher">🗑</button>`)
+          + row('Largeur', numIn(`openings.${i}.w`, op.w, 'min="0.1" step="0.1"') + `<span class="u">${esc(U)}</span>`)
+          + (win ? row('Bas (allège)', numIn(`openings.${i}.bot`, rd(bot), 'min="0" step="0.1"') + `<span class="u">${esc(U)}</span>`) : '')
+          + row('Haut', numIn(`openings.${i}.top`, rd(isNum(op.top) ? op.top : top), 'min="0" step="0.1"') + `<span class="u">${esc(U)} ${top >= Hm ? '(toute la hauteur)' : ''}</span>`) + `</div>`;
+      }).join('') || '<p class="muted">Outil Ouverture (D) : clic sur le mur pour percer une porte ou une fenêtre.</p>');
+      h += `<div class="kv"><span>Longueur (tracé)</span><b>${fmtLen(W.total)}</b></div>` + shapeTools(o);
       break;
     }
     case 'proc':
@@ -2985,7 +3348,7 @@ function renderPropsTab(b) {
         + row('Graine', numIn('gen.seed', o.gen.seed, 'step="1"') + '<button id="reseed" title="Nouveau tirage">🎲</button>')
         + row('Couleurs', 'motif ' + colorIn('gen.c', o.gen.c) + ' fond ' + colorIn('gen.bg', o.gen.bg))
         + row('Contour', colorIn('style.stroke', o.style.stroke) + numIn('style.sw', o.style.sw, 'min="0" step="0.5"'))
-        + row('Opacité', rangeIn('style.opacity', o.style.opacity ?? 1, 0, 1, 0.05)) + heightRow(o)
+        + row('Opacité', rangeIn('style.opacity', o.style.opacity ?? 1, 0, 1, 0.05)) + heightRow(o) + solidRow(o)
         + shapeTools(o);
       break;
     case 'text':
@@ -3033,7 +3396,8 @@ function renderPropsTab(b) {
   bindFields(b, () => selObjs(), {
     onApply: (k) => {
       const t = selObjs()[0];
-      if (t?.style && k.startsWith('style.') && !SCREEN_KINDS.has(t.kind) && t.kind !== 'proc' && t.kind !== 'text' && t.kind !== 'image') { if (t.wall) Object.assign(S.wallStyle, { stroke: t.style.stroke, sw: t.style.sw }); else Object.assign(S.toolStyle, deep(t.style)); }
+      if (t?.kind === 'wall') { if (k.startsWith('style.')) Object.assign(S.wallStyle, deep(t.style)); if (k === 'thick' && isNum(t.thick)) S.wallThick = t.thick; if (k === 'align') S.wallAlign = t.align; if (k === 'wallH' && isNum(t.wallH)) S.wallH = t.wallH; }
+      else if (t?.style && k.startsWith('style.') && !SCREEN_KINDS.has(t.kind) && t.kind !== 'proc' && t.kind !== 'text' && t.kind !== 'image') { if (t.wall) Object.assign(S.wallStyle, { stroke: t.style.stroke, sw: t.style.sw }); else Object.assign(S.toolStyle, deep(t.style)); }
       if (t?.kind === 'proc' && k.startsWith('gen.')) S.procGen = deep(t.gen);
       if (k === 'type' || k === 'title' || k === 'name') renderToolOptions();
     },
@@ -3041,6 +3405,8 @@ function renderPropsTab(b) {
   bindActs(b);
   $('#editPts', b)?.addEventListener('click', () => { S.sel = new Set([o.id]); S.vertexEdit = o.id; setTool('node'); renderTabBody(); });
   $('#mkWalls', b)?.addEventListener('click', () => wallsFromShape(o));
+  $('#toDoor', b)?.addEventListener('click', () => setTool('door'));
+  $$('[data-opdel]', b).forEach(x => x.onclick = () => { o.openings.splice(+x.dataset.opdel, 1); markObj(o); commit(); });
   $('#genType', b)?.addEventListener('change', e => { const g = GENS[e.target.value]; Object.assign(o.gen, { type: e.target.value, c: g.c, bg: g.bg }); o.style.stroke = shade(g.bg, -0.35); S.procGen = deep(o.gen); markObj(o); commit(); });
   $('#reseed', b)?.addEventListener('click', () => { o.gen.seed = Math.floor(Math.random() * 9999); markObj(o); commit(); });
   $('#colReset', b)?.addEventListener('click', () => { delete o.color; markObj(o); commit(); });
@@ -3388,8 +3754,12 @@ function loadDoc(d) {
   $('#docName').value = d.name;
   fitView(); applyMode(); scheduleAutosave();
 }
-async function importImages(files, atScreen) {
-  const imgs = [...files].filter(f => f.type.startsWith('image/') || /\.svg$/i.test(f.name));
+async function importImages(files, atScreen, forceImage) {
+  let imgs = [...files].filter(f => f.type.startsWith('image/') || /\.svg$/i.test(f.name));
+  if (!forceImage && S.mode === 'edit') {
+    const svgs = imgs.filter(f => /\.svg$/i.test(f.name) || f.type === 'image/svg+xml');
+    if (svgs.length) { imgs = imgs.filter(f => !svgs.includes(f)); askSvgImport(svgs, atScreen); }
+  }
   if (!imgs.length) return;
   if (S.mode !== 'edit') { toast('Passe en mode Édition pour importer des images'); return; }
   const L = targetLayerFor('images'), lift = layerLift(L);
