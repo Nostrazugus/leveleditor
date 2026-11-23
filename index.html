@@ -58,6 +58,8 @@ body.m-read #stage .bub,body.m-read #stage .ico{cursor:help}
 .hdl{fill:#fff;stroke:#2f8cff;stroke-width:1.5}
 .h-nw,.h-se{cursor:nwse-resize}.h-ne,.h-sw{cursor:nesw-resize}.h-n,.h-s{cursor:ns-resize}.h-e,.h-w{cursor:ew-resize}
 .hdlv{fill:#fff;stroke:#2f8cff;stroke-width:2;cursor:move}
+.hdlv.op{stroke:#e8742a;fill:#ffe2c8}
+.hdlr{fill:#fff;stroke:#2f8cff;stroke-width:1.5;cursor:grab}
 .hdlb{fill:#2f8cff;stroke:#fff;stroke-width:1.5;cursor:move}
 .ovtxt{font:600 11px system-ui,sans-serif;fill:#1d4ed8;paint-order:stroke;stroke:#fff;stroke-width:3px}
 .ovtxt.big{font-size:13px;fill:#c2185b}
@@ -455,8 +457,12 @@ function migrate(d) {
   for (const o of Object.values(d.objects)) {
     if (o.wall && (o.kind === 'poly' || o.kind === 'path')) {
       const st = o.style || {};
-      o.kind = 'wall'; delete o.wall; o.thick = rd((st.sw || 8) / ppuD); o.align = 'center'; o.openings = [];
+      o.kind = 'wall'; delete o.wall; o.thick = rd((st.sw || 8) / ppuD); o.align = 'center';
       o.style = { fill: st.stroke || '#4a4f58', fillMode: 'solid', stroke: shade(st.stroke || '#4a4f58', -0.4), sw: 1, dash: 'solid', opacity: st.opacity ?? 1, patScale: 2 };
+    }
+    if (o.kind === 'wall') {
+      o.style ||= {}; o.style.fillMode = 'solid'; o.style.fill ||= '#4a4f58';
+      if (o.openings) { if (o.openings.length) migrateOpenings(o, ppuD); delete o.openings; }
     }
   }
   if (!d.floors.find(f => f.id === d.settings.activeFloor)) d.settings.activeFloor = d.floors[0].id;
@@ -474,7 +480,7 @@ const S = {
   hiddenTypes: new Set(), hiddenCats: new Set(), showLabels: false,
   toolStyle: { stroke: '#3a3f47', sw: 2, fill: '#d5dce6', fillMode: 'solid', dash: 'solid', opacity: 1, patScale: 2 },
   wallStyle: { fill: '#4a4f58', fillMode: 'solid', stroke: '#1d2025', sw: 1, dash: 'solid', opacity: 1, patScale: 2 },
-  wallThick: 0.25, wallAlign: 'inside', doorW: 1.2, openKind: 'door', openBot: 0.9, openTop: 2.1,
+  wallThick: 0.25, wallAlign: 'inside', openW: 1, openBot: 0, openTop: 2.1,
   procGen: { type: 'foret', density: 1, scale: 1, seed: 1, c: GENS.foret.c, bg: GENS.foret.bg },
   linkStyle: 'critique', textSize: 20, wallH: 3,
   fileHandle: null, clipboard: null, user: '',
@@ -701,13 +707,14 @@ function nearestOnNodes(nodes, closed, sp, toScreen) {
 function splitNodes(nodes, i, t) {
   const n = nodes.length, a = nodes[i], b = nodes[(i + 1) % n];
   if (a.ox === a.x && a.oy === a.y && b.ix === b.x && b.iy === b.y) { // segment droit : nouveau nœud d'angle
-    nodes.splice(i + 1, 0, cornerNode([a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t])); return i + 1;
+    const c = cornerNode([a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t]); if (a.op) c.op = { ...a.op };
+    nodes.splice(i + 1, 0, c); return i + 1;
   }
   const L = (p, q) => [p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t];
   const P0 = [a.x, a.y], P1 = [a.ox, a.oy], P2 = [b.ix, b.iy], P3 = [b.x, b.y];
   const P01 = L(P0, P1), P12 = L(P1, P2), P23 = L(P2, P3), P012 = L(P01, P12), P123 = L(P12, P23), M = L(P012, P123);
   a.ox = P01[0]; a.oy = P01[1]; b.ix = P23[0]; b.iy = P23[1];
-  const nn = { x: M[0], y: M[1], ix: P012[0], iy: P012[1], ox: P123[0], oy: P123[1] };
+  const nn = { x: M[0], y: M[1], ix: P012[0], iy: P012[1], ox: P123[0], oy: P123[1] }; if (a.op) nn.op = { ...a.op };
   nodes.splice(i + 1, 0, nn);
   return i + 1;
 }
@@ -776,13 +783,33 @@ function wallExtract(W, a, b) { // portion de a à b (b peut dépasser la longue
 }
 function wallOpeningRanges(o, W) {
   const u = ppu();
-  return (o.openings || []).map((op, i) => [op, i]).filter(([op]) => op.seg < W.segLen.length).map(([op, i]) => { const c = W.segStart[op.seg] + clamp(op.c, 0, 1) * W.segLen[op.seg], hw = Math.max(0.05, op.w || 1) * u / 2; const r = [c - hw, c + hw]; r.op = op; r.i = i; return r; })
-    .sort((p, q) => p[0] - q[0]);
+  if (!o.nodes) return [];
+  const n = o.nodes.length, segs = o.closed ? n : n - 1, out = [];
+  for (let i = 0; i < segs && i < W.segLen.length; i++) { const op = o.nodes[i].op; if (!op || !(W.segLen[i] > 0)) continue; const r = [W.segStart[i], W.segStart[i] + W.segLen[i]]; r.op = op; r.i = i; out.push(r); }
+  return out;
+}
+function cubicLen(a, b) { let L = 0, prev = [a.x, a.y]; for (let k = 1; k <= 16; k++) { const p = cubicAt(a, b, k / 16); L += dist(prev, p); prev = p; } return L; }
+/* Ancien format (ouverture = position + largeur) → deux nœuds sur le tracé */
+function migrateOpenings(o, ppuD) {
+  if (!o.nodes) { o.nodes = (o.pts || []).map(cornerNode); delete o.pts; }
+  const n0 = o.nodes.length, bySeg = new Map();
+  for (const op of o.openings) { if (op.seg >= (o.closed ? n0 : n0 - 1)) continue; if (!bySeg.has(op.seg)) bySeg.set(op.seg, []); bySeg.get(op.seg).push(op); }
+  for (const seg of [...bySeg.keys()].sort((a, b) => b - a)) {
+    const L0 = cubicLen(o.nodes[seg], o.nodes[(seg + 1) % o.nodes.length]) || 1; let scale = 1;
+    for (const op of bySeg.get(seg).sort((a, b) => b.c - a.c)) {
+      const half = Math.max(0.05, op.w || 1) * ppuD / 2 / L0;
+      let t1 = Math.min(op.c + half, scale - 0.01), t0 = Math.max(0.01, op.c - half);
+      if (t1 - t0 < 0.01) continue;
+      splitNodes(o.nodes, seg, t1 / scale); splitNodes(o.nodes, seg, t0 / t1);
+      o.nodes[seg + 1].op = { bot: op.kind === 'window' ? (op.bot ?? 0.9) : 0, top: isNum(op.top) ? op.top : null };
+      scale = t0;
+    }
+  }
 }
 /* Bas et haut d'une ouverture (en m depuis la base du mur) ; porte = bas à 0 */
 function openingSpan(op, H) {
-  const bot = clamp(op.kind === 'window' ? (op.bot ?? 0.9) : 0, 0, H);
-  const top = clamp(isNum(op.top) ? op.top : (op.kind === 'window' ? 2.1 : H), bot, H);
+  const bot = clamp(op.bot || 0, 0, H);
+  const top = clamp(isNum(op.top) ? op.top : H, bot, H);
   return [bot, top];
 }
 /* Portions pleines du mur (les ouvertures coupent la ligne) */
@@ -1656,7 +1683,7 @@ function gridString() {
 
 /* ===== Objets en coordonnées monde ===== */
 function isClosed(o) { return o.kind === 'rect' || o.kind === 'ellipse' || o.kind === 'proc' || ((o.kind === 'poly' || o.kind === 'path' || o.kind === 'free') && o.closed); }
-function wallFill(o) { const s = o.style || {}; if (!s.fillMode || s.fillMode === 'none') return 'none'; if (s.fillMode === 'solid') return s.fill; return `url(#${ensurePattern(s.fillMode, s.fill, s.patScale)})`; }
+function wallFill(o) { return o.style?.fill || '#4a4f58'; }
 function fillOf(o) {
   const s = o.style || {}, st = S.doc.settings;
   if (st.heightView && isClosed(o) && o.kind !== 'proc' && (isNum(o.elev) || s.fillMode !== 'none')) return heightColor(floorAlt(layerById(o.layer)?.floor) + (o.elev || 0));
@@ -1734,7 +1761,7 @@ function objWorld(o) {
       const wcol = s.fill || '#4a4f58';
       wallOpeningRanges(o, W).forEach(r => {
         const seg = wallExtract(W, r[0], r[1]), P = ptsStr(seg).replace(/ /g, 'L');
-        if (r.op.kind === 'window') {
+        if ((r.op.bot || 0) > 0) {
           const [A, B] = wallEdges({ pts: seg, closed: false }, offs);
           out += `<path d="M${ptsStr([...A, ...B.reverse()]).replace(/ /g, 'L')}Z" fill="${mix(wcol, '#ffffff', 0.72)}" stroke="${wcol}" stroke-width="${rd(Math.max(0.8, T * 0.08))}" pointer-events="none"/><path d="M${P}" fill="none" stroke="${wcol}" stroke-width="${rd(Math.max(0.6, T * 0.08))}" pointer-events="none"/>`;
         } else out += `<path d="M${P}" fill="none" stroke="${wcol}" stroke-width="${rd(Math.max(1, T * 0.3))}" stroke-dasharray="${rd(T * 0.6)} ${rd(T * 0.5)}" opacity=".7" pointer-events="none"/>`;
@@ -1774,7 +1801,8 @@ function renderVolumesIso(list) {
   for (const o of list) {
     const id = X ? '' : ` data-oid="${o.id}"`, s = o.style || {}, baseOp = s.opacity ?? 1;
     const base = o.elev || 0, vb = unproj(0, -liftOfAlt(base)), vt = unproj(0, -liftOfAlt(base + wallHeight(o)));
-    const col = s.fillMode && s.fillMode !== 'none' ? s.fill : (s.stroke || '#9aa3ad');
+    const col = o.kind === 'wall' ? wallFill(o) : s.fillMode && s.fillMode !== 'none' ? s.fill : (s.stroke || '#9aa3ad');
+    const edge = s.sw > 0 && s.stroke && s.stroke !== 'none' ? `stroke="${s.stroke}" stroke-width="${rd(Math.max(0.6, Math.min(s.sw, 3)))}" vector-effect="non-scaling-stroke" stroke-linejoin="round"` : 'stroke="none"';
     const capStroke = s.sw > 0 && s.stroke && s.stroke !== 'none' ? `stroke="${s.stroke}" stroke-width="${s.sw}" stroke-linejoin="round"` : edge;
     if (o.kind === 'wall') {
       const W = wallLine(o); if (W.pts.length < 2) continue;
@@ -1814,7 +1842,7 @@ function renderVolumesIso(list) {
         const seg = { pts: wallExtract(W, r[0], r[1]), closed: false }, [bot, top] = openingSpan(r.op, H);
         emit(seg, 0, bot);          // allège (fenêtre)
         emit(seg, top, H);          // linteau
-        if (r.op.kind === 'window') {
+        if (bot > 0) {
           const vg = at((bot + top) / 2), [A, B] = wallEdges(seg, offs), mid = A.map((p, k) => [(p[0] + B[k][0]) / 2, (p[1] + B[k][1]) / 2]);
           const vb0 = at(bot), vt0 = at(top);
           pieces.push({ depth: proj(seg.pts[0][0], seg.pts[0][1])[1] + 0.005, svg: `<polygon points="${P([...mid.map(p => add(p, vb0)), ...mid.slice().reverse().map(p => add(p, vt0))])}" fill="#bfe3ff" fill-opacity=".35" stroke="${shade(col, -0.2)}" stroke-width="1" vector-effect="non-scaling-stroke" pointer-events="none"/>` });
@@ -2007,7 +2035,8 @@ function selOverlay(o, single) {
         const a = W([n.x, n.y]), hi = W([n.ix, n.iy]), ho = W([n.ox, n.oy]);
         if (dist(a, hi) > 1) s += `<line x1="${F(a[0])}" y1="${F(a[1])}" x2="${F(hi[0])}" y2="${F(hi[1])}" stroke="${ACC}" pointer-events="none"/><circle class="hdlb" data-bh="${i}" data-side="in" data-voi="${o.id}" cx="${F(hi[0])}" cy="${F(hi[1])}" r="4"/>`;
         if (dist(a, ho) > 1) s += `<line x1="${F(a[0])}" y1="${F(a[1])}" x2="${F(ho[0])}" y2="${F(ho[1])}" stroke="${ACC}" pointer-events="none"/><circle class="hdlb" data-bh="${i}" data-side="out" data-voi="${o.id}" cx="${F(ho[0])}" cy="${F(ho[1])}" r="4"/>`;
-        s += `<rect class="hdlv" data-v="${i}" data-voi="${o.id}" x="${F(a[0] - 5)}" y="${F(a[1] - 5)}" width="10" height="10"/>`;
+        const arr = shapeNodes(o), isOp = n.op || (i > 0 ? arr[i - 1].op : (o.closed && arr[arr.length - 1].op));
+        s += `<rect class="hdlv${isOp ? ' op' : ''}" data-v="${i}" data-voi="${o.id}" x="${F(a[0] - 5)}" y="${F(a[1] - 5)}" width="10" height="10"/>`;
       });
     }
     return s;
@@ -2015,6 +2044,23 @@ function selOverlay(o, single) {
   if (o.kind === 'text') return s;
   const H8 = { nw: [-1, -1], n: [0, -1], ne: [1, -1], e: [1, 0], se: [1, 1], s: [0, 1], sw: [-1, 1], w: [-1, 0] };
   for (const [h, [a, b]] of Object.entries(H8)) { const p = local(a, b); s += hdl(p[0], p[1], h, o.id); }
+  return s;
+}
+/* Poignée de rotation au-dessus de la sélection */
+function rotTargets() { return [...S.sel].map(obj).filter(o => o && o.kind !== 'link' && canEdit(o)); }
+function rotCenter(objs) {
+  if (objs.length === 1) { const o = objs[0]; if (o.cx !== undefined) return [o.cx, o.cy]; if (o.kind === 'text' || SCREEN_KINDS.has(o.kind)) return [o.x, o.y]; }
+  const [a, b, c, d] = bboxOf(objs.flatMap(objWorldCorners)); return [(a + c) / 2, (b + d) / 2];
+}
+function rotateHandle() {
+  if (S.tool !== 'select' || S.mode !== 'edit' || S.vertexEdit) return '';
+  const objs = rotTargets(); if (!objs.length || (objs.length === 1 && SCREEN_KINDS.has(objs[0].kind))) return '';
+  let box = null; for (const o of objs) { const b = objScreenBox(o); if (b) box = box ? [Math.min(box[0], b[0]), Math.min(box[1], b[1]), Math.max(box[2], b[2]), Math.max(box[3], b[3])] : b; }
+  if (!box) return '';
+  const F = f1, x = (box[0] + box[2]) / 2, y0 = box[1] - 6, y1 = box[1] - 30;
+  let s = `<line x1="${F(x)}" y1="${F(y0)}" x2="${F(x)}" y2="${F(y1 + 6)}" stroke="${ACC}" stroke-width="1.2" pointer-events="none"/><circle class="hdlr" data-rot="1" cx="${F(x)}" cy="${F(y1)}" r="6"/>`;
+  s += `<path d="M${F(x - 3)},${F(y1 - 1)}a3.2,3.2 0 1 1 1,3" fill="none" stroke="${ACC}" stroke-width="1.2" pointer-events="none"/>`;
+  if (S.drag?.type === 'rotate' && S.cursorS) s += `<text x="${F(S.cursorS[0] + 14)}" y="${F(S.cursorS[1] - 10)}" class="ovtxt big">${Math.round(S.drag.deg || 0)}°</text>`;
   return s;
 }
 function draftCursorWorld() {
@@ -2052,6 +2098,7 @@ function overlayString() {
     s += `<g pointer-events="none"><line x1="${F(A[0])}" y1="${F(A[1])}" x2="${F(B[0])}" y2="${F(B[1])}" stroke="#ff3d7f" stroke-width="2"/><circle cx="${F(A[0])}" cy="${F(A[1])}" r="4" fill="#ff3d7f"/><circle cx="${F(B[0])}" cy="${F(B[1])}" r="4" fill="#ff3d7f"/>`;
     s += `<text x="${F(m[0])}" y="${F(m[1] - 10)}" text-anchor="middle" class="ovtxt big">${fmtLen(dist(a, b))}</text></g>`;
   }
+  s += rotateHandle();
   s += peersOverlay();
   if (S.tool === 'flow' && S.flowCur && obj(S.flowCur) && S.mode === 'edit') {
     const o = obj(S.flowCur), c = W2S(o.x, o.y, objLift(o)), R = bubbleR(layerById(o.layer));
@@ -2160,14 +2207,14 @@ const TOOLS = [
 ];
 const HINTS = {
   node: 'Clic sur une forme : afficher ses nœuds · glisser un nœud ou une poignée · clic sur le tracé : ajouter un nœud · double-clic sur un nœud : angle ↔ courbe · Alt+clic : supprimer · Alt pendant le glisser : poignées indépendantes',
-  select: 'Clic : sélectionner · Maj+clic : ajouter · Glisser : déplacer ou cadre de sélection · Double-clic : éditer les points',
+  select: 'Clic : sélectionner · Maj+clic : ajouter · Glisser : déplacer ou cadre de sélection · Poignée ronde : rotation (Maj : par 15°) · Double-clic : éditer les nœuds',
   hand: 'Glisser pour déplacer la vue · Molette : zoom',
   rect: 'Glisser pour tracer · Maj : carré · Alt : sans magnétisme',
   ellipse: 'Glisser pour tracer · Maj : cercle · Alt : sans magnétisme',
   polygon: 'Clic : ajouter un point · Clic sur le 1er point, Entrée ou double-clic : fermer · Retour arrière : retirer le dernier point',
   polyline: 'Clic : ajouter un point · Entrée, double-clic ou clic droit : terminer · Maj : angles à 45°',
   wall: 'Trace la ligne d’un mur (bande épaisse) · Clic sur le 1er point : boucle fermée · Entrée ou double-clic : terminer',
-  door: 'Clic sur un mur : percer une porte ou une fenêtre (choix dans la barre) · Alt+clic sur une ouverture : la reboucher · réglages fins dans Propriétés',
+  door: 'Clic sur un mur : crée une ouverture entre deux nouveaux nœuds (bas 0 = porte) · règle sa largeur en déplaçant ces nœuds avec l’outil A · Alt+clic sur une ouverture : la reboucher',
   pen: 'Clic : point d’angle · Clic-glisser : point courbe · Clic sur le 1er point : fermer · Entrée : terminer',
   free: 'Glisser pour dessiner à main levée (revenir au départ ferme la forme)',
   text: 'Clic pour poser un texte',
@@ -2239,6 +2286,7 @@ function hitInfo(e) {
     bh: bh && { oid: bh.dataset.voi, i: +bh.dataset.bh, side: bh.dataset.side },
     wp: wp && { oid: wp.dataset.voi, i: +wp.dataset.wp },
     o: oe ? obj(oe.dataset.oid) : null,
+    rot: !!t.closest('[data-rot]'),
   };
 }
 function wAt(sp, lift, mode) { return snap(S2W(sp[0], sp[1], lift), mode); }
@@ -2293,6 +2341,7 @@ function startPan(sp) { S.drag = { type: 'pan', sp, v0: { ...S.view } }; $('#sta
 
 function downSelect(e, sp, hi, o) {
   if (S.mode === 'edit') {
+    if (hi.rot) { startRotate(sp); return; }
     if (hi.h && obj(hi.h.oid)) { const O = obj(hi.h.oid); S.drag = { type: 'resize', id: O.id, h: hi.h.h, O: deep(O), sp }; return; }
     if (hi.wp && obj(hi.wp.oid)) { const l = obj(hi.wp.oid); if (e.altKey) { l.wps.splice(hi.wp.i, 1); commit(); return; } S.drag = { type: 'wp', id: l.id, i: hi.wp.i, sp }; return; }
   }
@@ -2320,12 +2369,39 @@ function downNode(e, sp, hi, o) {
     const lift = objLift(cur);
     const r = nearestOnNodes(shapeNodes(cur), nodesClosed(cur), sp, p => W2S(p[0], p[1], lift));
     if (r.i >= 0 && r.d < 9) {
-      ensureNodes(cur); const k = splitNodes(cur.nodes, r.i, r.t); remapOpeningsSplit(cur, r.i, r.t); markObj(cur);
+      ensureNodes(cur); const k = splitNodes(cur.nodes, r.i, r.t); markObj(cur);
       S.drag = { type: 'vertex', id: cur.id, i: k, O: deep(cur), sp, fresh: true }; return;
     }
   }
   if (o && NODE_KINDS.has(o.kind)) { S.vertexEdit = o.id; S.sel = new Set([o.id]); S.activeLayer = o.layer; refreshLayersPanel(); afterSelect(); return; }
   if (S.vertexEdit || S.sel.size) { S.vertexEdit = null; S.sel.clear(); afterSelect(); }
+}
+/* --- Rotation à la souris --- */
+function startRotate(sp) {
+  const objs = rotTargets(); if (!objs.length) return;
+  const c = rotCenter(objs), lift = objLift(objs[0]), w = S2W(sp[0], sp[1], lift);
+  S.drag = { type: 'rotate', ids: objs.map(o => o.id), orig: objs.map(o => deep(o)), c, lift, a0: Math.atan2(w[1] - c[1], w[0] - c[0]), deg: 0 };
+}
+function rotateObj(o, O, c, deg) {
+  const R = p => rotPt(p, c, deg).map(f1), nr = v => rd((((v || 0) + deg) % 360 + 540) % 360 - 180);
+  if (O.cx !== undefined) { [o.cx, o.cy] = R([O.cx, O.cy]); o.rot = nr(O.rot); }
+  else if (O.kind === 'text') { [o.x, o.y] = R([O.x, O.y]); o.rot = nr(O.rot); }
+  else if (O.pts) o.pts = O.pts.map(R);
+  else if (O.nodes) o.nodes = O.nodes.map(n => { const a = R([n.x, n.y]), i = R([n.ix, n.iy]), q = R([n.ox, n.oy]); return { ...n, x: a[0], y: a[1], ix: i[0], iy: i[1], ox: q[0], oy: q[1] }; });
+  else if (O.x !== undefined) [o.x, o.y] = R([O.x, O.y]);
+}
+function dragRotate(d, sp, e) {
+  const w = S2W(sp[0], sp[1], d.lift);
+  let deg = (Math.atan2(w[1] - d.c[1], w[0] - d.c[0]) - d.a0) * 180 / Math.PI;
+  deg = ((deg % 360) + 540) % 360 - 180;
+  if (e.shiftKey) {
+    const O = d.orig[0];
+    if (d.orig.length === 1 && (O.cx !== undefined || O.kind === 'text')) deg = Math.round(((O.rot || 0) + deg) / 15) * 15 - (O.rot || 0);
+    else deg = Math.round(deg / 15) * 15;
+  }
+  d.deg = deg;
+  d.ids.forEach((id, i) => { const o = obj(id); if (o) { rotateObj(o, d.orig[i], d.c, deg); markObj(o); } });
+  scheduleRender();
 }
 function afterSelect() { refreshProps(); renderToolOptions(); scheduleRender(); }
 
@@ -2397,37 +2473,32 @@ function dragResize(d, sp, e) {
   }
   markObj(o); scheduleRender();
 }
-function remapOpeningsSplit(o, i, t) {
-  if (!o.openings?.length) return;
-  const r3 = v => Math.round(v * 1e4) / 1e4;
-  for (const op of o.openings) { if (op.seg > i) op.seg++; else if (op.seg === i) { if (op.c < t) op.c = r3(op.c / (t || 1)); else { op.seg = i + 1; op.c = r3((op.c - t) / ((1 - t) || 1)); } } }
-}
-function remapOpeningsDelete(o, i) {
-  if (!o.openings?.length) return;
-  const n = (o.nodes || o.pts).length + 1, prev = (i - 1 + n) % n;
-  o.openings = o.openings.filter(op => op.seg !== i && op.seg !== prev).map(op => ({ ...op, seg: op.seg > i ? op.seg - 1 : op.seg }));
-}
-/* --- Outil Ouverture --- */
+/* --- Outil Ouverture : deux nœuds sur le tracé du mur délimitent l'ouverture --- */
 function downDoor(e, sp, hi, o) {
   if (S.mode !== 'edit') return;
   const openEl = e.target.closest?.('[data-open]');
-  if (o && o.kind === 'wall' && openEl && e.altKey) { o.openings.splice(+openEl.dataset.open, 1); S.sel = new Set([o.id]); commit(); toast('Ouverture rebouchée'); return; }
-  let wall = o && o.kind === 'wall' ? o : null, best = null;
+  if (o && o.kind === 'wall' && openEl && e.altKey) { const n = o.nodes?.[+openEl.dataset.open]; if (n) delete n.op; S.sel = new Set([o.id]); commit(); toast('Ouverture rebouchée (les nœuds restent)'); return; }
+  const wall = o && o.kind === 'wall' ? o : null; let best = null;
   const cands = wall ? [wall] : Object.values(S.doc.objects).filter(x => x.kind === 'wall' && canEdit(x));
   for (const w of cands) {
-    const W = wallLine(w), lift = objLift(w), pts = W.pts.map(p => W2S(p[0], p[1], lift));
-    const ns = nearestSeg(pts, sp, false); if (ns.i < 0) continue;
-    if (!best || ns.d < best.d) { const segL = dist(pts[ns.i], pts[ns.i + 1]) || 1; const s = W.cum[ns.i] + (W.cum[ns.i + 1] - W.cum[ns.i]) * (dist(pts[ns.i], ns.q) / segL); best = { w, W, s, d: ns.d }; }
+    const lift = objLift(w), r = nearestOnNodes(shapeNodes(w), nodesClosed(w), sp, p => W2S(p[0], p[1], lift));
+    if (r.i >= 0 && (!best || r.d < best.d)) best = { w, ...r };
   }
   if (!best || (!wall && best.d > 16)) { toast('Clique sur un mur (objet Mur) pour y percer une ouverture'); return; }
-  const at = wallSegAt(best.W, best.s);
-  best.w.openings ||= []; best.w.openings.push(S.openKind === 'window' ? { kind: 'window', seg: at.seg, c: Math.round(at.c * 1e4) / 1e4, w: S.doorW, bot: S.openBot, top: S.openTop } : { kind: 'door', seg: at.seg, c: Math.round(at.c * 1e4) / 1e4, w: S.doorW, top: S.openTop });
-  S.sel = new Set([best.w.id]); S.activeLayer = best.w.layer; commit();
+  const w = ensureNodes(best.w), nodes = w.nodes, a = nodes[best.i], b = nodes[(best.i + 1) % nodes.length];
+  if (a.op) { toast('Il y a déjà une ouverture ici : règle sa largeur en déplaçant ses nœuds (outil A)'); return; }
+  const half = (S.openW * ppu() / 2) / (cubicLen(a, b) || 1);
+  let t0 = best.t - half, t1 = best.t + half;
+  if (t0 < 0.02) { t1 += 0.02 - t0; t0 = 0.02; } if (t1 > 0.98) { t0 -= t1 - 0.98; t1 = 0.98; } t0 = Math.max(0.02, t0);
+  if (t1 - t0 < 0.01) { toast('Segment trop court pour une ouverture'); return; }
+  splitNodes(nodes, best.i, t1); splitNodes(nodes, best.i, t0 / t1);
+  nodes[best.i + 1].op = { bot: S.openBot, top: S.openTop };
+  S.sel = new Set([w.id]); S.activeLayer = w.layer; markObj(w); commit();
+  toast('Ouverture créée : déplace ses deux nœuds orange (outil A) pour régler sa largeur', 3500);
 }
 function deleteVertex(o, i) {
   if (o.pts) { const min = isClosed(o) ? 3 : 2; if (o.pts.length <= min) { toast('Nombre minimal de points atteint'); return; } o.pts.splice(i, 1); }
   else if (o.nodes) { if (o.nodes.length <= (nodesClosed(o) ? 3 : 2)) { toast('Nombre minimal de points atteint'); return; } o.nodes.splice(i, 1); }
-  if (o.kind === 'wall') remapOpeningsDelete(o, i);
   commit();
 }
 
@@ -2456,7 +2527,7 @@ function downPoly(sp) {
     const t = S.tool;
     const o = t === 'proc'
       ? addObject({ kind: 'proc', pts: [w], gen: deep(S.procGen), style: { stroke: shade(S.procGen.bg, -0.35), sw: 1.5, fill: '#000', fillMode: 'none', dash: 'solid', opacity: 1 } }, L.id)
-      : t === 'wall' ? addObject({ kind: 'wall', pts: [w], closed: false, thick: S.wallThick, align: 'center', openings: [], wallH: S.wallH, style: deep(S.wallStyle) }, L.id)
+      : t === 'wall' ? addObject({ kind: 'wall', pts: [w], closed: false, thick: S.wallThick, align: 'center', wallH: S.wallH, style: deep(S.wallStyle) }, L.id)
       : addObject({ kind: 'poly', pts: [w], closed: false, style: deep(S.toolStyle) }, L.id);
     S.draft = { id: o.id, tool: t, lift }; S.sel = new Set([o.id]); scheduleRender(); return;
   }
@@ -2606,6 +2677,7 @@ function onMove(e) {
     case 'move': dragMove(d, sp); break;
     case 'flowpress': if (d.moved || dist(sp, d.sp) > 4) { d.moved = true; dragMove(d, sp); } break;
     case 'resize': dragResize(d, sp, e); break;
+    case 'rotate': dragRotate(d, sp, e); break;
     case 'vertex': {
       if (!d.moved && dist(sp, d.sp) < 3) break; d.moved = true;
       const o = obj(d.id); if (!o) break; const w = snap(S2W(sp[0], sp[1], objLift(o)));
@@ -2636,7 +2708,7 @@ function onUp(e) {
   switch (d.type) {
     case 'move': if (d.moved) commit(); else refreshProps(); break;
     case 'flowpress': upFlowPress(d); break;
-    case 'resize': case 'vertex': case 'bezh': case 'wp': commit(); break;
+    case 'resize': case 'vertex': case 'bezh': case 'wp': case 'rotate': commit(); break;
     case 'marquee': {
       const [a, b, c, dd] = S.marquee; S.marquee = null;
       const r = [Math.min(a, c), Math.min(b, dd), Math.max(a, c), Math.max(b, dd)];
@@ -2980,8 +3052,8 @@ function renderToolOptions() {
     } else if (t === 'wall' || t === 'door' || ((t === 'select' || t === 'node') && selWalls.length)) {
       const w0 = selWalls[0], src = w0?.style || S.wallStyle, U = esc(S.doc.grid.unitName);
       styleTargets = selWalls; defaults = S.wallStyle;
-      box = t === 'door' ? `<label>Type ${selIn('openKind', S.openKind, { door: 'Porte', window: 'Fenêtre' })}</label><label>Largeur ${numIn('doorW', S.doorW, 'min="0.1" step="0.1" style="width:52px"')}</label>${S.openKind === 'window' ? `<label>Bas ${numIn('openBot', S.openBot, 'min="0" step="0.1" style="width:52px"')}</label>` : ''}<label>Haut ${numIn('openTop', S.openTop, 'min="0" step="0.1" style="width:52px"')} ${U}</label>`
-        : `${selWalls.length ? '<span class="muted">Mur</span>' : ''}<label>Mur ${colorIn('fill', src.fill)}</label><label>Contour ${colorIn('stroke', src.stroke)}</label><label>Épaisseur ${numIn('thick', w0 ? (w0.thick ?? 0.25) : S.wallThick, 'min="0.01" step="0.05" style="width:58px"')} ${U}</label><label>Hauteur ${numIn('wallH', w0 ? (w0.wallH ?? 3) : S.wallH, 'min="0" step="0.5" style="width:52px"')} ${U}</label>`;
+      box = t === 'door' ? `<span class="muted">Nouvelle ouverture</span><label>Bas ${numIn('openBot', S.openBot, 'min="0" step="0.1" style="width:52px"')}</label><label>Haut ${numIn('openTop', S.openTop, 'min="0" step="0.1" style="width:52px"')} ${U}</label><button data-preset="door" title="Bas 0 m, haut 2,10 m">Porte</button><button data-preset="window" title="Bas 0,90 m, haut 2,10 m">Fenêtre</button>`
+        : `${selWalls.length ? '<span class="muted">Mur</span>' : ''}<label>Couleur ${colorIn('fill', src.fill)}</label><label>Contour ${colorIn('stroke', src.stroke)}</label><label>Épaisseur ${numIn('thick', w0 ? (w0.thick ?? 0.25) : S.wallThick, 'min="0.01" step="0.05" style="width:58px"')} ${U}</label><label>Hauteur ${numIn('wallH', w0 ? (w0.wallH ?? 3) : S.wallH, 'min="0" step="0.5" style="width:52px"')} ${U}</label>`;
     }
     else if (t === 'proc') box = `<label>Motif ${selIn('type', S.procGen.type, Object.fromEntries(Object.entries(GENS).map(([k, v]) => [k, v.label])))}</label><label>Densité ${rangeIn('density', S.procGen.density, 0.2, 3, 0.1)}</label>`;
     else if (t === 'text') box = `<label>Taille ${numIn('size', S.textSize, 'min="4" step="1" style="width:56px"')}</label>`;
@@ -3004,8 +3076,6 @@ function renderToolOptions() {
       const v = read();
       if (k === 'size') { S.textSize = v; return; }
       if (k === 'linkStyle') { S.linkStyle = v; return; }
-      if (k === 'doorW') { if (isNum(v) && v > 0) S.doorW = v; return; }
-      if (k === 'openKind') { S.openKind = v; return; }
       if (k === 'openBot' || k === 'openTop') { if (isNum(v) && v >= 0) S[k] = v; return; }
       if (k === 'thick') { if (isNum(v) && v > 0) { S.wallThick = v; for (const o of styleTargets) { o.thick = v; markObj(o); } scheduleRender(); } return; }
       if (defaults) {
@@ -3016,8 +3086,9 @@ function renderToolOptions() {
       if (target) { target[k] = v; if (t === 'proc' && k === 'type') { S.procGen.c = GENS[v].c; S.procGen.bg = GENS[v].bg; } }
     };
     el.addEventListener('input', ap);
-    el.addEventListener('change', () => { ap(); if (styleTargets.length) commit(); else if (k === 'fillMode' || k === 'openKind') renderToolOptions(); });
+    el.addEventListener('change', () => { ap(); if (styleTargets.length) commit(); else if (k === 'fillMode') renderToolOptions(); });
   });
+  $$('[data-preset]', root).forEach(b => b.onclick = () => { if (b.dataset.preset === 'door') { S.openBot = 0; S.openTop = 2.1; } else { S.openBot = 0.9; S.openTop = 2.1; } renderToolOptions(); });
   $('#endChain', root)?.addEventListener('click', () => { S.flowCur = null; renderToolOptions(); scheduleRender(); });
 }
 
@@ -3258,6 +3329,7 @@ function selObjs() { return [...S.sel].map(obj).filter(Boolean); }
 function styleSection(o, isWall) {
   const s = o.style || {};
   const wall = o.kind === 'wall';
+  if (wall) return row('Couleur', colorIn('style.fill', s.fill || '#4a4f58')) + row('Contour', colorIn('style.stroke', s.stroke) + numIn('style.sw', s.sw, 'min="0" step="0.5"')) + row('Opacité', rangeIn('style.opacity', s.opacity ?? 1, 0, 1, 0.05));
   let h = row(wall ? 'Contour' : 'Trait', colorIn('style.stroke', s.stroke) + numIn('style.sw', s.sw, 'min="0" step="0.5"') + selIn('style.dash', s.dash || 'solid', { solid: 'Plein', dash: 'Tirets', dot: 'Points' }));
   if (o.kind !== 'text' && o.kind !== 'image' && (wall || isClosed(o) || o.kind === 'rect' || o.kind === 'ellipse')) {
     h += row(wall ? 'Matière du mur' : 'Remplissage', selIn('style.fillMode', s.fillMode || 'none', FILL_MODES).replace('<select', '<select data-rebuild') + colorIn('style.fill', s.fill));
@@ -3283,7 +3355,7 @@ function wallsFromShape(o) {
   let w;
   if (o.kind === 'rect' || (o.pts && o.kind !== 'free')) w = { kind: 'wall', pts: (o.kind === 'rect' ? shapeNodes(o).map(n => [n.x, n.y]) : deep(o.pts)).map(p => [f1(p[0]), f1(p[1])]), closed };
   else w = { kind: 'wall', nodes: deep(shapeNodes(o)), closed };
-  Object.assign(w, { thick: S.wallThick, align: closed ? S.wallAlign : 'center', openings: [], wallH: S.wallH, style: deep(S.wallStyle) });
+  Object.assign(w, { thick: S.wallThick, align: closed ? S.wallAlign : 'center', wallH: S.wallH, style: deep(S.wallStyle) });
   if (isNum(o.elev)) w.elev = o.elev;
   const at = L.items.indexOf(o.id) + 1;
   addObject(w, L.id, at);
@@ -3331,14 +3403,14 @@ function renderPropsTab(b) {
         + row('Épaisseur', numIn('thick', o.thick ?? 0.25, 'min="0.01" step="0.05"') + `<span class="u">${esc(U)}</span>`)
         + row('Placement', selIn('align', o.align || 'center', closed ? { inside: 'À l’intérieur du tracé', center: 'Centré sur le tracé', outside: 'À l’extérieur du tracé' } : { inside: 'D’un côté du tracé', center: 'Centré sur le tracé', outside: 'De l’autre côté' }))
         + row('Fermé', chkIn('closed', o.closed, 'data-rebuild')) + heightRow(o) + volumeSection(o);
-      const Hm = o.wallH ?? 3;
-      h += `<div class="sub">Ouvertures (${(o.openings || []).length})</div>` + ((o.openings || []).map((op, i) => {
-        const win = op.kind === 'window', [bot, top] = openingSpan(op, Hm);
-        return `<div class="opblock">` + row(`${win ? 'Fenêtre' : 'Porte'} ${i + 1}`, selIn(`openings.${i}.kind`, win ? 'window' : 'door', { door: 'Porte', window: 'Fenêtre' }).replace('<select', '<select data-rebuild') + `<button data-opdel="${i}" class="danger" title="Reboucher">🗑</button>`)
-          + row('Largeur', numIn(`openings.${i}.w`, op.w, 'min="0.1" step="0.1"') + `<span class="u">${esc(U)}</span>`)
-          + (win ? row('Bas (allège)', numIn(`openings.${i}.bot`, rd(bot), 'min="0" step="0.1"') + `<span class="u">${esc(U)}</span>`) : '')
-          + row('Haut', numIn(`openings.${i}.top`, rd(isNum(op.top) ? op.top : top), 'min="0" step="0.1"') + `<span class="u">${esc(U)} ${top >= Hm ? '(toute la hauteur)' : ''}</span>`) + `</div>`;
-      }).join('') || '<p class="muted">Outil Ouverture (D) : clic sur le mur pour percer une porte ou une fenêtre.</p>');
+      const Hm = o.wallH ?? 3, ops = (o.nodes || []).map((n, i) => [n.op, i]).filter(x => x[0]);
+      h += `<div class="sub">Ouvertures (${ops.length})</div>` + (ops.map(([op, i], k) => {
+        const [bot, top] = openingSpan(op, Hm), wid = W.segLen[i] ? fmtLen(W.segLen[i]) : '—';
+        return `<div class="opblock">` + row(`${bot > 0 ? 'Fenêtre' : 'Porte'} ${k + 1}`, `<span class="u">largeur ${wid}</span><button data-opset="${i}:door" title="Bas 0">Porte</button><button data-opset="${i}:window" title="Bas 0,90 m">Fenêtre</button><button data-opdel="${i}" class="danger" title="Reboucher">🗑</button>`)
+          + row('Bas', numIn(`nodes.${i}.op.bot`, rd(bot), 'min="0" step="0.1"') + `<span class="u">${esc(U)}</span>`)
+          + row('Haut', numIn(`nodes.${i}.op.top`, rd(top), 'min="0" step="0.1"') + `<span class="u">${esc(U)}${top >= Hm ? ' (toute la hauteur)' : ''}</span>`) + `</div>`;
+      }).join('') || '<p class="muted">Outil Ouverture (D) : clic sur le mur pour créer une ouverture entre deux nœuds.</p>')
+        + (ops.length ? '<p class="muted">La largeur se règle en déplaçant les deux nœuds orange de l’ouverture (outil Nœuds, A).</p>' : '');
       h += `<div class="kv"><span>Longueur (tracé)</span><b>${fmtLen(W.total)}</b></div>` + shapeTools(o);
       break;
     }
@@ -3406,7 +3478,8 @@ function renderPropsTab(b) {
   $('#editPts', b)?.addEventListener('click', () => { S.sel = new Set([o.id]); S.vertexEdit = o.id; setTool('node'); renderTabBody(); });
   $('#mkWalls', b)?.addEventListener('click', () => wallsFromShape(o));
   $('#toDoor', b)?.addEventListener('click', () => setTool('door'));
-  $$('[data-opdel]', b).forEach(x => x.onclick = () => { o.openings.splice(+x.dataset.opdel, 1); markObj(o); commit(); });
+  $$('[data-opdel]', b).forEach(x => x.onclick = () => { delete o.nodes[+x.dataset.opdel].op; markObj(o); commit(); });
+  $$('[data-opset]', b).forEach(x => x.onclick = () => { const [i, kind] = x.dataset.opset.split(':'); const op = o.nodes[+i].op; op.bot = kind === 'door' ? 0 : 0.9; if (!isNum(op.top)) op.top = 2.1; markObj(o); commit(); });
   $('#genType', b)?.addEventListener('change', e => { const g = GENS[e.target.value]; Object.assign(o.gen, { type: e.target.value, c: g.c, bg: g.bg }); o.style.stroke = shade(g.bg, -0.35); S.procGen = deep(o.gen); markObj(o); commit(); });
   $('#reseed', b)?.addEventListener('click', () => { o.gen.seed = Math.floor(Math.random() * 9999); markObj(o); commit(); });
   $('#colReset', b)?.addEventListener('click', () => { delete o.color; markObj(o); commit(); });
