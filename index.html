@@ -60,6 +60,7 @@ body.m-read #stage .bub,body.m-read #stage .ico{cursor:help}
 .hdlv{fill:#fff;stroke:#2f8cff;stroke-width:2;cursor:move}
 .hdlv.op{stroke:#e8742a;fill:#ffe2c8}
 .hdlr{fill:#fff;stroke:#2f8cff;stroke-width:1.5;cursor:grab}
+.hdls{stroke:#e8742a;stroke-width:2;cursor:move}
 .hdlb{fill:#2f8cff;stroke:#fff;stroke-width:1.5;cursor:move}
 .ovtxt{font:600 11px system-ui,sans-serif;fill:#1d4ed8;paint-order:stroke;stroke:#fff;stroke-width:3px}
 .ovtxt.big{font-size:13px;fill:#c2185b}
@@ -585,7 +586,7 @@ function worldTransform(lift = 0) {
 }
 function liftOfAlt(alt) { return isIso() ? alt * ppu() * S.doc.settings.isoGap : 0; }
 function layerLift(L) { return L ? liftOfAlt(floorAlt(L.floor)) : 0; }
-function objLift(o) { let l = layerLift(layerById(o.layer)); if (isIso() && isNum(o.elev)) l += liftOfAlt(o.elev); return l; }
+function objLift(o) { let l = layerLift(layerById(o.layer)); if (isIso() && isNum(o.elev) && !slopeOf(o)) l += liftOfAlt(o.elev); return l; }
 function activeLift() { return liftOfAlt(floorAlt(S.doc.settings.activeFloor)); }
 
 function snap(p, mode) {
@@ -892,6 +893,39 @@ function gpeEdges(op, offs) { const s = op.side || 'both'; return s === 'in' ? [
 function wallEdges(run, offs) { return [offsetLine(run.pts, offs[0], run.closed), offsetLine(run.pts, offs[1], run.closed)]; }
 /* Repère d'une ouverture à partir d'une abscisse globale */
 function wallSegAt(W, s) { for (let i = W.segStart.length - 1; i >= 0; i--) if (s >= W.segStart[i]) return { seg: i, c: W.segLen[i] ? clamp((s - W.segStart[i]) / W.segLen[i], 0, 1) : 0 }; return { seg: 0, c: 0 }; }
+/* ===== Pentes et escaliers =====
+   slope = { type: 'ramp'|'stairs', a, b (points bas et haut), h0, h1 (m depuis l'étage), steps, sides, mark }
+   La hauteur varie le long de a→b ; avant a et après b la surface reste plate. */
+function slopeOf(o) { return o && o.slope && o.slope.a && o.slope.b && isClosed(o) ? o.slope : null; }
+function polyArea(p) { let a = 0; for (let i = 0, n = p.length; i < n; i++) { const q = p[i], r = p[(i + 1) % n]; a += q[0] * r[1] - r[0] * q[1]; } return a / 2; }
+function slopeT(sl, p) { const dx = sl.b[0] - sl.a[0], dy = sl.b[1] - sl.a[1], L2 = dx * dx + dy * dy || 1; return ((p[0] - sl.a[0]) * dx + (p[1] - sl.a[1]) * dy) / L2; }
+/* Bandes de hauteur : z(t) = z0 + g·(t − ta) (ta = 0 pour la bande avant le départ) */
+function slopeBands(sl) {
+  const h0 = sl.h0 ?? 0, h1 = sl.h1 ?? 2, D = h1 - h0;
+  if (sl.type === 'stairs') {
+    const N = clamp(Math.round(sl.steps || 8), 1, 200), out = [{ ta: -Infinity, tb: 0, z0: h0, g: 0 }];
+    for (let k = 0; k < N; k++) out.push({ ta: k / N, tb: (k + 1) / N, z0: h0 + D * (k + 1) / N, g: 0 });
+    out.push({ ta: 1, tb: Infinity, z0: h1, g: 0 });
+    return out;
+  }
+  return [{ ta: -Infinity, tb: 0, z0: h0, g: 0 }, { ta: 0, tb: 1, z0: h0, g: D }, { ta: 1, tb: Infinity, z0: h1, g: 0 }];
+}
+function bandZ(bd, t) { return bd.z0 + bd.g * (t - (isFinite(bd.ta) ? bd.ta : 0)); }
+/* Découpe d'un polygone par la droite t = cste (Sutherland–Hodgman) */
+function clipByT(poly, sl, t, above) {
+  const out = [], n = poly.length, f = p => (slopeT(sl, p) - t) * (above ? 1 : -1);
+  for (let i = 0; i < n; i++) {
+    const p = poly[i], q = poly[(i + 1) % n], fp = f(p), fq = f(q);
+    if (fp >= 0) out.push(p);
+    if ((fp >= 0) !== (fq >= 0)) { const u = fp / (fp - fq); out.push([p[0] + (q[0] - p[0]) * u, p[1] + (q[1] - p[1]) * u]); }
+  }
+  return out;
+}
+function bandPoly(ring, sl, bd) { let R = ring; if (isFinite(bd.ta)) R = clipByT(R, sl, bd.ta, true); if (isFinite(bd.tb)) R = clipByT(R, sl, bd.tb, false); return R; }
+function defaultSlope(o, type) {
+  const [x0, y0, x1, y1] = bboxOf(geomPts(o)), cx = (x0 + x1) / 2, cy = (y0 + y1) / 2, horiz = x1 - x0 >= y1 - y0;
+  return { type, a: horiz ? [f1(x0), f1(cy)] : [f1(cx), f1(y1)], b: horiz ? [f1(x1), f1(cy)] : [f1(cx), f1(y0)], h0: 0, h1: 2, steps: 8, sides: true, mark: true };
+}
 function polyLen(pts) { let l = 0; for (let i = 1; i < pts.length; i++) l += dist(pts[i - 1], pts[i]); return l; }
 
 /* ===== Couleurs ===== */
@@ -1740,10 +1774,45 @@ function gridString() {
 function isClosed(o) { return o.kind === 'rect' || o.kind === 'ellipse' || o.kind === 'proc' || ((o.kind === 'poly' || o.kind === 'path' || o.kind === 'free') && o.closed); }
 function wallFill(o) { return S.doc.settings.heightView ? heightColor(objTopAlt(o)) : (o.style?.fill || '#4a4f58'); }
 /* Altitude absolue du sol et du sommet d'un objet (étage + hauteur au sol + hauteur du volume) */
-function objBaseAlt(o) { return floorAlt(layerById(o.layer)?.floor) + (o.elev || 0); }
-function objTopAlt(o) { return objBaseAlt(o) + (isVolume(o) ? (isNum(o.wallH) ? o.wallH : 3) : 0); }
+function objBaseAlt(o) { const sl = slopeOf(o); return floorAlt(layerById(o.layer)?.floor) + (sl ? Math.min(sl.h0 ?? 0, sl.h1 ?? 2) : (o.elev || 0)); }
+function objTopAlt(o) { const sl = slopeOf(o); if (sl) return floorAlt(layerById(o.layer)?.floor) + Math.max(sl.h0 ?? 0, sl.h1 ?? 2); return objBaseAlt(o) + (isVolume(o) ? (isNum(o.wallH) ? o.wallH : 3) : 0); }
+/* Dégradé de la vue hauteurs le long d'une pente (paliers nets pour un escalier) */
+function slopeGradId(o) { return 'sg' + o.id + (S.exporting ? 'x' : ''); }
+function slopeGradDef(o) {
+  const sl = o.slope, fa = floorAlt(layerById(o.layer)?.floor), F = f1, h0 = sl.h0 ?? 0, h1 = sl.h1 ?? 2;
+  const st = (off, z) => `<stop offset="${rd(clamp(off, 0, 1))}" stop-color="${heightColor(fa + z)}"/>`;
+  let stops = '';
+  if (sl.type === 'stairs') { stops += st(0, h0); for (const bd of slopeBands(sl)) if (isFinite(bd.ta) && isFinite(bd.tb)) stops += st(bd.ta, bd.z0) + st(bd.tb, bd.z0); }
+  else for (let k = 0; k <= 8; k++) stops += st(k / 8, h0 + (h1 - h0) * k / 8);
+  let a = sl.a, b = sl.b;
+  if (o.rot && o.cx !== undefined) { a = rotPt(a, [o.cx, o.cy], -o.rot); b = rotPt(b, [o.cx, o.cy], -o.rot); }
+  return `<linearGradient id="${slopeGradId(o)}" gradientUnits="userSpaceOnUse" x1="${F(a[0])}" y1="${F(a[1])}" x2="${F(b[0])}" y2="${F(b[1])}">${stops}</linearGradient>`;
+}
+/* Flèche bas → haut, cotes et nez de marches (vue de dessus) */
+function slopeMark(o, arrowOnly) {
+  const sl = slopeOf(o); if (!sl || sl.mark === false) return '';
+  const F = f1, X = S.exporting, gs = S.doc.grid.size, a = sl.a, b = sl.b, Lw = dist(a, b); if (Lw < 2) return '';
+  const ux = (b[0] - a[0]) / Lw, uy = (b[1] - a[1]) / Lw, nx = -uy, ny = ux, ink = '#1d2025', ff = FONT.replace(/"/g, "'");
+  let s = '';
+  if (!arrowOnly && sl.type === 'stairs') {
+    const N = clamp(Math.round(sl.steps || 8), 1, 200), ring = geomPts(o), [x0, y0, x1, y1] = bboxOf(ring), D = Math.hypot(x1 - x0, y1 - y0) + Lw, cid = 'sc' + o.id + (X ? 'x' : '');
+    let d = '';
+    for (let k = 0; k <= N; k++) { const c = [a[0] + (b[0] - a[0]) * k / N, a[1] + (b[1] - a[1]) * k / N]; d += `M${F(c[0] - nx * D)},${F(c[1] - ny * D)}L${F(c[0] + nx * D)},${F(c[1] + ny * D)}`; }
+    s += `<clipPath id="${cid}"><polygon points="${ptsStr(ring)}"/></clipPath><path d="${d}" clip-path="url(#${cid})" stroke="${ink}" stroke-opacity=".55" stroke-width="1.2" vector-effect="non-scaling-stroke" fill="none"/>`;
+  }
+  const hs = Math.min(Lw * 0.3, gs * 0.6), base = [b[0] - ux * hs, b[1] - uy * hs], wg = hs * 0.5;
+  const line = `M${F(a[0])},${F(a[1])}L${F(base[0])},${F(base[1])}`;
+  s += `<path d="${line}" stroke="#fff" stroke-width="4" vector-effect="non-scaling-stroke" stroke-linecap="round"/><path d="${line}" stroke="${ink}" stroke-width="1.8" vector-effect="non-scaling-stroke" stroke-linecap="round"/>`
+    + `<path d="M${F(b[0])},${F(b[1])}L${F(base[0] + nx * wg)},${F(base[1] + ny * wg)}L${F(base[0] - nx * wg)},${F(base[1] - ny * wg)}Z" fill="${ink}" stroke="#fff" stroke-width="1" vector-effect="non-scaling-stroke"/>`
+    + `<circle cx="${F(a[0])}" cy="${F(a[1])}" r="${F(gs * 0.12)}" fill="${ink}" stroke="#fff" stroke-width="1" vector-effect="non-scaling-stroke"/>`;
+  const fs = rd(gs * 0.4), U = S.doc.grid.unitName || 'm';
+  const lab = (p, t, k) => `<text x="${F(p[0] + ux * fs * k)}" y="${F(p[1] + uy * fs * k)}" font-size="${fs}" font-weight="700" text-anchor="middle" dominant-baseline="middle" fill="${ink}" stroke="#fff" stroke-width="${rd(fs * 0.25)}" paint-order="stroke" font-family="${ff}">${esc(t)}</text>`;
+  s += lab(a, `${rd(sl.h0 ?? 0)}`, -1.2) + lab(b, `${rd(sl.h1 ?? 2)} ${U}`, 1.8);
+  return `<g pointer-events="none">${s}</g>`;
+}
 function fillOf(o) {
   const s = o.style || {}, st = S.doc.settings;
+  if (st.heightView && slopeOf(o)) return `url(#${slopeGradId(o)})`;
   if (st.heightView && isClosed(o) && o.kind !== 'proc' && (isNum(o.elev) || o.solid || s.fillMode !== 'none')) return heightColor(objTopAlt(o));
   if (!isClosed(o) || !s.fillMode || s.fillMode === 'none') return 'none';
   if (s.fillMode === 'solid') return s.fill;
@@ -1841,23 +1910,84 @@ function objWorld(o) {
     case 'proc': {
       const P = ptsStr(geomPts(o)), cid = 'cp' + o.id + (X ? 'x' : '');
       if (S.doc.settings.heightView) {
-        out = `<g${id}${op}><polygon points="${P}" fill="${heightColor(objTopAlt(o))}" ${strokeAttrs(s)} pointer-events="all"/></g>`;
+        out = `<g${id}${op}><polygon points="${P}" fill="${slopeOf(o) ? `url(#${slopeGradId(o)})` : heightColor(objTopAlt(o))}" ${strokeAttrs(s)} pointer-events="all"/></g>`;
       } else {
         out = `<g${id}${op}><clipPath id="${cid}"><polygon points="${P}"/></clipPath><g clip-path="url(#${cid})">${genProc(o)}</g><polygon points="${P}" fill="none" ${strokeAttrs(s)}/>${X ? '' : `<polygon points="${P}" fill="transparent" stroke="none" pointer-events="all"/>`}</g>`;
       }
       break;
     }
   }
-  if (isIso() && isNum(o.elev) && o.elev) { const v = unproj(0, -liftOfAlt(o.elev)); out = `<g transform="translate(${F(v[0])},${F(v[1])})">${out}</g>`; }
+  if (S.doc.settings.heightView && slopeOf(o)) out = slopeGradDef(o) + out;
+  if (isIso() && isNum(o.elev) && o.elev && !slopeOf(o)) { const v = unproj(0, -liftOfAlt(o.elev)); out = `<g transform="translate(${F(v[0])},${F(v[1])})">${out}</g>`; }
   return out;
 }
 function isVolume(o) { return o.kind === 'wall' || (o.solid && isClosed(o) && o.kind !== 'text' && o.kind !== 'image'); }
 function renderWorld(L) {
   if (L.type !== 'draw' && L.type !== 'images') return '';
   let h = ''; const vols = [];
-  for (const id of L.items) { const o = obj(id); if (!o) continue; if (isIso() && isVolume(o) && wallHeight(o) > 0) vols.push(o); else h += objWorld(o); }
+  for (const id of L.items) {
+    const o = obj(id); if (!o) continue;
+    if (isIso() && slopeOf(o)) vols.push(o);
+    else if (isIso() && isVolume(o) && wallHeight(o) > 0) vols.push(o);
+    else h += objWorld(o) + (slopeOf(o) ? slopeMark(o) : '');
+  }
   if (vols.length) h += renderVolumesIso(vols);
   return h;
+}
+/* ===== Pente / escalier en vue isométrique =====
+   Chaque bande de hauteur est une surface plane : on y redessine la forme d'origine (couleur, motif,
+   zone procédurale…) avec une transformation affine qui la « soulève » selon la pente. */
+function rampIso(o, ctx) {
+  const { P, add, edge, faceFill, id, baseOp, st } = ctx, sl = o.slope, s = o.style || {}, X = S.exporting, F = f1;
+  const ring = geomPts(o).filter((p, i, a) => i === 0 || dist(p, a[i - 1]) > 0.01); if (ring.length < 3) return null;
+  const u = unproj(0, -liftOfAlt(1)), fa = floorAlt(layerById(o.layer)?.floor);
+  const rc = o.kind === 'proc' ? (o.gen?.bg || '#9aa3ad') : (s.fillMode && s.fillMode !== 'none' ? s.fill : '#b8c0c9');
+  const colAt = z => st.heightView ? heightColor(fa + z) : rc;
+  const Lz = (p, z) => [p[0] + u[0] * z, p[1] + u[1] * z];
+  const ad = [sl.b[0] - sl.a[0], sl.b[1] - sl.a[1]], L2 = ad[0] * ad[0] + ad[1] * ad[1] || 1;
+  const bands = slopeBands(sl), polys = bands.map(bd => bandPoly(ring, sl, bd));
+  const area = polyArea(ring), outN = (p, q) => { const dx = q[0] - p[0], dy = q[1] - p[1], l = Math.hypot(dx, dy) || 1; return area > 0 ? [dy / l, -dx / l] : [-dy / l, dx / l]; };
+  const onT = (p, t) => isFinite(t) && Math.abs(slopeT(sl, p) - t) < 1e-6;
+  const seam = ring.length > 8;
+  const tops = [], sides = [];
+  bands.forEach((bd, k) => {
+    const R = polys[k]; if (R.length < 3 || Math.abs(polyArea(R)) < 0.5) return;
+    const ta0 = isFinite(bd.ta) ? bd.ta : 0, gv = [bd.g * ad[0] / L2, bd.g * ad[1] / L2];
+    const zc = bd.z0 - bd.g * ta0 - (gv[0] * sl.a[0] + gv[1] * sl.a[1]);
+    const M = [1 + u[0] * gv[0], u[1] * gv[0], u[0] * gv[1], 1 + u[1] * gv[1], u[0] * zc, u[1] * zc].map(v => +v.toFixed(5));
+    const cid = `rc${o.id}${X ? 'x' : ''}_${k}`;
+    let body = objWorld(o);
+    if (bd.g && sl.type !== 'stairs') body += slopeMark(o, true);
+    let shadeSvg = '';
+    if (bd.g) { const dn = proj(ad[0], ad[1]), k2 = -dn[1] / (Math.hypot(dn[0], dn[1]) || 1) * Math.sign(bd.g); shadeSvg = `<polygon points="${P(R)}" fill="${k2 > 0 ? '#ffffff' : '#000000'}" fill-opacity="${rd(Math.min(0.22, Math.abs(k2) * 0.16))}" pointer-events="none"/>`; }
+    const cen = [R.reduce((a, p) => a + p[0], 0) / R.length, R.reduce((a, p) => a + p[1], 0) / R.length];
+    tops.push({ depth: proj(cen[0], cen[1])[1], svg: `<g transform="matrix(${M.join(',')})"><clipPath id="${cid}"><polygon points="${P(R)}"/></clipPath><g clip-path="url(#${cid})">${body}</g>${shadeSvg}</g>` });
+    // contremarches (escalier) : saut de hauteur au début de la bande
+    if (k > 0 && isFinite(bd.ta)) {
+      const zl = bandZ(bands[k - 1], bd.ta), zh = bandZ(bd, bd.ta);
+      if (Math.abs(zh - zl) > 0.005) {
+        const n = zh > zl ? [-ad[0], -ad[1]] : ad;
+        if (proj(n[0], n[1])[1] > 0.001) for (let i = 0; i < R.length; i++) {
+          const p = R[i], q = R[(i + 1) % R.length]; if (!onT(p, bd.ta) || !onT(q, bd.ta) || dist(p, q) < 0.01) continue;
+          const m = [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2];
+          tops.push({ depth: proj(m[0], m[1])[1] + 1e-3, svg: `<polygon${id} points="${P([Lz(p, zl), Lz(q, zl), Lz(q, zh), Lz(p, zh)])}" fill="${faceFill(colAt(Math.max(zl, zh)), n)}" ${edge}/>` });
+        }
+      }
+    }
+    // côtés jusqu'au sol de l'étage
+    if (sl.sides !== false) for (let i = 0; i < R.length; i++) {
+      const p = R[i], q = R[(i + 1) % R.length]; if (dist(p, q) < 0.01) continue;
+      if ((onT(p, bd.ta) && onT(q, bd.ta)) || (onT(p, bd.tb) && onT(q, bd.tb))) continue;
+      const zp = bandZ(bd, slopeT(sl, p)), zq = bandZ(bd, slopeT(sl, q)); if (Math.abs(zp) < 0.01 && Math.abs(zq) < 0.01) continue;
+      const n = outN(p, q); if (proj(n[0], n[1])[1] <= 0.001) continue;
+      const fill = faceFill(colAt(Math.max(zp, zq)), n), m = [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2];
+      sides.push({ depth: proj(m[0], m[1])[1], svg: `<polygon${id} points="${P([Lz(p, 0), Lz(q, 0), Lz(q, zq), Lz(p, zp)])}" fill="${fill}" ${seam ? `stroke="${fill}" stroke-width="0.8" vector-effect="non-scaling-stroke"` : edge}/>` });
+    }
+  });
+  tops.sort((p, q) => p.depth - q.depth); sides.sort((p, q) => p.depth - q.depth);
+  const svg = tops.map(x => x.svg).join('') + sides.map(x => x.svg).join('');
+  const c = [ring.reduce((a, p) => a + p[0], 0) / ring.length, ring.reduce((a, p) => a + p[1], 0) / ring.length];
+  return { depth: proj(c[0], c[1])[1], svg: baseOp < 1 ? `<g opacity="${baseOp}">${svg}</g>` : svg };
 }
 /* ===== Volumes en vue isométrique : murs (bandes) et formes pleines ===== */
 function wallHeight(o) { const h = isNum(o.wallH) ? o.wallH : 3; return S.doc.settings.wallMode === 'low' ? Math.min(h, 0.6) : h; }
@@ -1883,6 +2013,7 @@ function renderVolumesIso(list) {
     const col = st.heightView ? heightColor(objTopAlt(o)) : o.kind === 'wall' ? wallFill(o) : s.fillMode && s.fillMode !== 'none' ? s.fill : (s.stroke || '#9aa3ad');
     const edge = s.sw > 0 && s.stroke && s.stroke !== 'none' ? `stroke="${s.stroke}" stroke-width="${rd(Math.max(0.6, Math.min(s.sw, 3)))}" vector-effect="non-scaling-stroke" stroke-linejoin="round"` : 'stroke="none"';
     const capStroke = s.sw > 0 && s.stroke && s.stroke !== 'none' ? `stroke="${s.stroke}" stroke-width="${s.sw}" stroke-linejoin="round"` : edge;
+    if (slopeOf(o)) { const pc = rampIso(o, { P, add, edge, faceFill, id, baseOp, st }); if (pc) pieces.push(pc); continue; }
     if (o.kind === 'wall') {
       const W = wallLine(o); if (W.pts.length < 2) continue;
       const H = wallHeight(o), offs = wallOffsets(o, W), ring = W.closed ? W.pts.slice(0, -1) : W.pts;
@@ -2158,6 +2289,17 @@ function selOverlay(o, single) {
   for (const [h, [a, b]] of Object.entries(H8)) { const p = local(a, b); s += hdl(p[0], p[1], h, o.id); }
   return s;
 }
+/* Poignées de pente : bas (blanche) et haut (orange) */
+function slopeHandles() {
+  if (S.mode !== 'edit' || S.tool !== 'select' || S.sel.size !== 1 || S.vertexEdit) return '';
+  const o = obj([...S.sel][0]), sl = slopeOf(o); if (!sl || !canEdit(o)) return '';
+  const ll = layerLift(layerById(o.layer)), F = f1;
+  const A = W2S(sl.a[0], sl.a[1], ll + liftOfAlt(sl.h0 ?? 0)), B = W2S(sl.b[0], sl.b[1], ll + liftOfAlt(sl.h1 ?? 2));
+  const lab = (p, t) => `<text x="${F(p[0] + 10)}" y="${F(p[1] - 9)}" class="ovtxt">${t}</text>`;
+  return `<line x1="${F(A[0])}" y1="${F(A[1])}" x2="${F(B[0])}" y2="${F(B[1])}" stroke="#e8742a" stroke-width="1.5" stroke-dasharray="5 4" pointer-events="none"/>`
+    + `<circle class="hdls" data-sh="0" data-voi="${o.id}" cx="${F(A[0])}" cy="${F(A[1])}" r="6.5" fill="#fff"/><circle class="hdls" data-sh="1" data-voi="${o.id}" cx="${F(B[0])}" cy="${F(B[1])}" r="6.5" fill="#e8742a"/>`
+    + lab(A, `bas ${rd(sl.h0 ?? 0)}`) + lab(B, `haut ${rd(sl.h1 ?? 2)}`);
+}
 /* Poignée de rotation au-dessus de la sélection */
 function rotTargets() { return [...S.sel].map(obj).filter(o => o && o.kind !== 'link' && canEdit(o)); }
 function rotCenter(objs) {
@@ -2211,6 +2353,7 @@ function overlayString() {
     s += `<text x="${F(m[0])}" y="${F(m[1] - 10)}" text-anchor="middle" class="ovtxt big">${fmtLen(dist(a, b))}</text></g>`;
   }
   s += rotateHandle();
+  s += slopeHandles();
   s += peersOverlay();
   if (S.tool === 'flow' && S.flowCur && obj(S.flowCur) && S.mode === 'edit') {
     const o = obj(S.flowCur), c = W2S(o.x, o.y, objLift(o)), R = bubbleR(layerById(o.layer));
@@ -2399,6 +2542,7 @@ function hitInfo(e) {
     wp: wp && { oid: wp.dataset.voi, i: +wp.dataset.wp },
     o: oe ? obj(oe.dataset.oid) : null,
     rot: !!t.closest('[data-rot]'),
+    sh: (() => { const e = t.closest('[data-sh]'); return e && { oid: e.dataset.voi, i: +e.dataset.sh }; })(),
     lc: (() => { const e = t.closest('[data-lc]'); return e && { oid: e.dataset.voi, i: +e.dataset.lc }; })(),
   };
 }
@@ -2455,6 +2599,7 @@ function startPan(sp) { S.drag = { type: 'pan', sp, v0: { ...S.view } }; $('#sta
 
 function downSelect(e, sp, hi, o) {
   if (S.mode === 'edit') {
+    if (hi.sh && obj(hi.sh.oid)) { S.drag = { type: 'slopeh', id: hi.sh.oid, i: hi.sh.i }; return; }
     if (hi.rot) { startRotate(sp); return; }
     if (hi.lc && obj(hi.lc.oid)) { S.drag = { type: 'lctrl', id: hi.lc.oid, i: hi.lc.i }; return; }
     if (hi.h && obj(hi.h.oid)) { const O = obj(hi.h.oid); S.drag = { type: 'resize', id: O.id, h: hi.h.h, O: deep(O), sp }; return; }
@@ -2504,6 +2649,7 @@ function rotateObj(o, O, c, deg) {
   else if (O.pts) o.pts = O.pts.map(R);
   else if (O.nodes) o.nodes = O.nodes.map(n => { const a = R([n.x, n.y]), i = R([n.ix, n.iy]), q = R([n.ox, n.oy]); return { ...n, x: a[0], y: a[1], ix: i[0], iy: i[1], ox: q[0], oy: q[1] }; });
   else if (O.x !== undefined) [o.x, o.y] = R([O.x, O.y]);
+  if (O.slope?.a) o.slope = { ...O.slope, a: R(O.slope.a), b: R(O.slope.b) };
 }
 function dragRotate(d, sp, e) {
   const w = S2W(sp[0], sp[1], d.lift);
@@ -2527,9 +2673,10 @@ function refPoint(O) {
   return [O.x, O.y];
 }
 function translateObj(o, O, dx, dy) {
+  if (O.slope?.a) o.slope = { ...O.slope, a: [f1(O.slope.a[0] + dx), f1(O.slope.a[1] + dy)], b: [f1(O.slope.b[0] + dx), f1(O.slope.b[1] + dy)] };
   if (O.cx !== undefined) { o.cx = f1(O.cx + dx); o.cy = f1(O.cy + dy); }
   else if (O.pts) o.pts = O.pts.map(p => [f1(p[0] + dx), f1(p[1] + dy)]);
-  else if (O.nodes) o.nodes = O.nodes.map(n => ({ x: n.x + dx, y: n.y + dy, ix: n.ix + dx, iy: n.iy + dy, ox: n.ox + dx, oy: n.oy + dy }));
+  else if (O.nodes) o.nodes = O.nodes.map(n => ({ ...n, x: n.x + dx, y: n.y + dy, ix: n.ix + dx, iy: n.iy + dy, ox: n.ox + dx, oy: n.oy + dy }));
   else if (O.kind === 'link') { o.wps = (O.wps || []).map(p => [f1(p[0] + dx), f1(p[1] + dy)]); if (O.ctrl) o.ctrl = O.ctrl.map(p => [f1(p[0] + dx), f1(p[1] + dy)]); }
   else if (O.x !== undefined) { o.x = f1(O.x + dx); o.y = f1(O.y + dy); }
 }
@@ -2569,6 +2716,10 @@ function dragResize(d, sp, e) {
       if (hx < 0) x0 = x1 - nw; else x1 = x0 + nw; if (hy < 0) y0 = y1 - nh; else y1 = y0 + nh;
     }
     const ncx = (x0 + x1) / 2, ncy = (y0 + y1) / 2, rr = (O.rot || 0) * Math.PI / 180;
+    if (O.slope?.a) {
+      const mapL = p => { const q = rotPt(p, [O.cx, O.cy], -(O.rot || 0)), lx = q[0] - O.cx, ly = q[1] - O.cy; return rotPt([O.cx + x0 + (lx + O.w / 2) / (O.w || 1) * (x1 - x0), O.cy + y0 + (ly + O.h / 2) / (O.h || 1) * (y1 - y0)], [O.cx, O.cy], O.rot || 0).map(f1); };
+      o.slope = { ...O.slope, a: mapL(O.slope.a), b: mapL(O.slope.b) };
+    }
     o.cx = f1(O.cx + ncx * Math.cos(rr) - ncy * Math.sin(rr)); o.cy = f1(O.cy + ncx * Math.sin(rr) + ncy * Math.cos(rr));
     o.w = f1(x1 - x0); o.h = f1(y1 - y0);
   } else {
@@ -2584,7 +2735,8 @@ function dragResize(d, sp, e) {
     const sx = (x1 - x0) / ((bx1 - bx0) || 1), sy = (y1 - y0) / ((by1 - by0) || 1);
     const M = (x, y) => [x0 + (x - bx0) * sx, y0 + (y - by0) * sy];
     if (O.pts) o.pts = O.pts.map(p => M(p[0], p[1]).map(f1));
-    if (O.nodes) o.nodes = O.nodes.map(n => { const a = M(n.x, n.y), i = M(n.ix, n.iy), q = M(n.ox, n.oy); return { x: a[0], y: a[1], ix: i[0], iy: i[1], ox: q[0], oy: q[1] }; });
+    if (O.nodes) o.nodes = O.nodes.map(n => { const a = M(n.x, n.y), i = M(n.ix, n.iy), q = M(n.ox, n.oy); return { ...n, x: a[0], y: a[1], ix: i[0], iy: i[1], ox: q[0], oy: q[1] }; });
+    if (O.slope?.a) o.slope = { ...O.slope, a: M(...O.slope.a).map(f1), b: M(...O.slope.b).map(f1) };
   }
   markObj(o); scheduleRender();
 }
@@ -2794,6 +2946,11 @@ function onMove(e) {
     case 'flowpress': if (d.moved || dist(sp, d.sp) > 4) { d.moved = true; dragMove(d, sp); } break;
     case 'resize': dragResize(d, sp, e); break;
     case 'rotate': dragRotate(d, sp, e); break;
+    case 'slopeh': {
+      const o = obj(d.id), sl = o?.slope; if (!sl) break;
+      const w = snap(S2W(sp[0], sp[1], layerLift(layerById(o.layer)) + liftOfAlt(d.i ? (sl.h1 ?? 2) : (sl.h0 ?? 0))));
+      sl[d.i ? 'b' : 'a'] = [f1(w[0]), f1(w[1])]; markObj(o); scheduleRender(); break;
+    }
     case 'lctrl': {
       const l = obj(d.id); if (!l) break; const a = obj(l.from), b = obj(l.to); if (!a || !b) break;
       if (!l.ctrl) l.ctrl = linkDefaultCtrl(a, b);
@@ -2830,7 +2987,7 @@ function onUp(e) {
   switch (d.type) {
     case 'move': if (d.moved) commit(); else refreshProps(); break;
     case 'flowpress': upFlowPress(d); break;
-    case 'resize': case 'vertex': case 'bezh': case 'wp': case 'rotate': case 'lctrl': commit(); break;
+    case 'resize': case 'vertex': case 'bezh': case 'wp': case 'rotate': case 'lctrl': case 'slopeh': commit(); refreshProps(); break;
     case 'marquee': {
       const [a, b, c, dd] = S.marquee; S.marquee = null;
       const r = [Math.min(a, c), Math.min(b, dd), Math.max(a, c), Math.max(b, dd)];
@@ -3499,14 +3656,35 @@ function styleSection(o, isWall) {
   h += row('Opacité', rangeIn('style.opacity', s.opacity ?? 1, 0, 1, 0.05));
   return h;
 }
-function heightRow(o) { return row('Hauteur au sol', numIn('elev', o.elev, 'step="0.5" placeholder="0"') + `<span class="u">${esc(S.doc.grid.unitName)} (depuis l’étage)</span>`); }
+function heightRow(o) { if (slopeOf(o)) return ''; return row('Hauteur au sol', numIn('elev', o.elev, 'step="0.5" placeholder="0"') + `<span class="u">${esc(S.doc.grid.unitName)} (depuis l’étage)</span>`); }
 function volumeSection(o) {
   const U = esc(S.doc.grid.unitName), wall = o.kind === 'wall';
   return `<div class="sub">${wall ? 'Mur' : 'Volume'}</div>` + row(wall ? 'Hauteur du mur' : 'Hauteur du volume', numIn('wallH', o.wallH ?? 3, 'min="0" step="0.5"') + `<span class="u">${U}</span>`)
     + row('Coupe en iso', wall ? selIn('wallCut', o.wallCut || 'auto', { auto: 'Automatique', never: 'Jamais coupé', always: 'Toujours coupé' }) : selIn('wallCut', o.wallCut === 'always' ? 'always' : 'never', { never: 'Jamais transparent', always: 'Toujours transparent' }))
     + `<p class="muted">${wall ? 'En iso, « Automatique » rend transparents les pans tournés vers toi (réglage dans Hauteurs ▾).' : 'En iso, la forme entière est extrudée : son remplissage devient le dessus du volume, son contour reste décoratif.'}</p>`;
 }
-function solidRow(o) { return isClosed(o) ? row('Volume (mur plein)', chkIn('solid', o.solid, 'data-rebuild')) + (o.solid ? volumeSection(o) : '') : ''; }
+const RELIEFS = { flat: 'Plat', solid: 'Volume (mur plein)', ramp: 'Pente', stairs: 'Escalier' };
+function reliefOf(o) { return o.slope ? (o.slope.type === 'stairs' ? 'stairs' : 'ramp') : o.solid ? 'solid' : 'flat'; }
+function solidRow(o) {
+  if (!isClosed(o)) return '';
+  const r = reliefOf(o);
+  return row('Relief', `<select id="reliefSel">${Object.entries(RELIEFS).map(([k, v]) => `<option value="${k}"${k === r ? ' selected' : ''}>${v}</option>`).join('')}</select>`)
+    + (r === 'solid' ? volumeSection(o) : r === 'flat' ? '' : slopeSection(o));
+}
+function slopeSection(o) {
+  const sl = o.slope, U = esc(S.doc.grid.unitName), stairs = sl.type === 'stairs';
+  const len = dist(sl.a, sl.b) / ppu(), dh = (sl.h1 ?? 2) - (sl.h0 ?? 0), N = clamp(Math.round(sl.steps || 8), 1, 200);
+  const pct = len ? Math.abs(dh) / len * 100 : 0, deg = Math.atan2(Math.abs(dh), len) * 180 / Math.PI;
+  return `<div class="sub">${stairs ? 'Escalier' : 'Pente'}</div>`
+    + row('Hauteur au départ', numIn('slope.h0', sl.h0 ?? 0, 'step="0.25" data-rebuild') + `<span class="u">${U} (poignée blanche)</span>`)
+    + row('Hauteur à l’arrivée', numIn('slope.h1', sl.h1 ?? 2, 'step="0.25" data-rebuild') + `<span class="u">${U} (poignée orange)</span>`)
+    + (stairs ? row('Marches', numIn('slope.steps', N, 'min="1" max="200" step="1" data-rebuild') + `<span class="u">de ${rd(Math.abs(dh) / N * 100)} cm · giron ${rd(len / N * 100)} cm</span>`) : '')
+    + row('Côtés pleins', chkIn('slope.sides', sl.sides !== false) + '<span class="u">jusqu’au sol de l’étage (iso)</span>')
+    + row('Flèche et cotes', chkIn('slope.mark', sl.mark !== false))
+    + `<div class="kv"><span>Longueur (horizontale)</span><b>${rd(len)} ${U}</b></div><div class="kv"><span>Inclinaison</span><b>${Math.round(pct)} % · ${Math.round(deg)}°</b></div>`
+    + `<div class="btnrow"><button id="slopeSwap">Inverser le sens</button><button id="slopeFit" title="Replace les poignées d’un bord à l’autre de la forme">Recaler sur la forme</button></div>`
+    + `<p class="muted">Avec l’outil Sélection, glisse les poignées <b>bas</b> (blanche) et <b>haut</b> (orange) pour orienter la ${stairs ? 'montée' : 'pente'}. Avant et après ces points, la surface reste plate.</p>`;
+}
 function shapeTools(o) {
   return `<div class="btnrow"><button id="editPts" title="Outil Édition des nœuds (A)">Éditer les nœuds</button>${o.kind === 'wall' ? '<button id="toDoor" title="Outil Ouverture (D)">Percer une ouverture</button>' : '<button id="mkWalls" title="Crée un nouvel objet Mur qui suit ce contour">Créer un mur depuis ce contour</button>'}</div>`;
 }
@@ -3544,7 +3722,7 @@ function renderPropsTab(b) {
     bindActs(b); return;
   }
   const o = objs[0], L = layerById(o.layer);
-  let h = `<div class="ph"><span class="pk">${KIND_LABEL[o.kind] || o.kind}${o.solid && isClosed(o) ? ' (volume)' : ''}</span><span class="pl">${esc(L?.name)}</span></div>`;
+  let h = `<div class="ph"><span class="pk">${KIND_LABEL[o.kind] || o.kind}${isClosed(o) && reliefOf(o) !== 'flat' ? ' (' + RELIEFS[reliefOf(o)].split(' ')[0].toLowerCase() + ')' : ''}</span><span class="pl">${esc(L?.name)}</span></div>`;
   if (!ro || o.kind === 'note') h += `<div class="acts"><button data-act="dup" title="Dupliquer (Ctrl+D)">⧉</button><button data-act="front" title="Premier plan (Maj+])">⤒</button><button data-act="up" title="Avancer (])">↑</button><button data-act="down" title="Reculer ([)">↓</button><button data-act="back" title="Arrière-plan (Maj+[)">⤓</button><button data-act="del" class="danger" title="Supprimer (Suppr)">🗑</button></div>`;
   const U = S.doc.grid.unitName;
   if (!['bubble', 'icon', 'link'].includes(o.kind)) h += row('Nom', txtIn('name', o.name, KIND_LABEL[o.kind] || ''));
@@ -3659,6 +3837,15 @@ function renderPropsTab(b) {
   bindActs(b);
   $('#editPts', b)?.addEventListener('click', () => { S.sel = new Set([o.id]); S.vertexEdit = o.id; setTool('node'); renderTabBody(); });
   $('#mkWalls', b)?.addEventListener('click', () => wallsFromShape(o));
+  $('#reliefSel', b)?.addEventListener('change', e => {
+    const v = e.target.value;
+    if (v === 'flat') { delete o.solid; delete o.slope; }
+    else if (v === 'solid') { o.solid = true; delete o.slope; }
+    else { delete o.solid; if (!o.slope) { o.slope = defaultSlope(o, v); if (isNum(o.elev) && o.elev) { o.slope.h0 += o.elev; o.slope.h1 += o.elev; } } else o.slope.type = v; }
+    markObj(o); commit();
+  });
+  $('#slopeSwap', b)?.addEventListener('click', () => { const sl = o.slope; [sl.a, sl.b] = [sl.b, sl.a]; markObj(o); commit(); });
+  $('#slopeFit', b)?.addEventListener('click', () => { const d = defaultSlope(o, o.slope.type); o.slope.a = d.a; o.slope.b = d.b; markObj(o); commit(); });
   $('#toDoor', b)?.addEventListener('click', () => setTool('door'));
   $$('[data-opdel]', b).forEach(x => x.onclick = () => { delete o.nodes[+x.dataset.opdel].op; markObj(o); commit(); });
   $$('select[data-k$=".op.type"]', b).forEach(x => x.addEventListener('change', () => {
@@ -4181,6 +4368,7 @@ function helpModal() {
   ${T('<kbd>Ctrl</kbd>+<kbd>S</kbd> / <kbd>Ctrl</kbd>+<kbd>O</kbd>', 'Enregistrer / ouvrir une carte (.json)')}</table>
   <h3>Calques et étages</h3><p>Chaque calque a un type (Dessin, Images, Flow, Icônes, Notes) : les outils choisissent automatiquement un calque compatible sur l’étage actif, ou en créent un. Glisse les calques pour les réordonner ; ⚙ permet de changer d’étage, de couleur de flow ou de rendre un calque commun à tous les étages.</p>
   <p>Les <b>étages</b> ont une altitude. « Oignon » affiche l’étage inférieur en transparence ; la vue <b>Isométrique</b> empile les étages ; la vue <b>Hauteurs</b> colore les formes selon leur altitude (étage + hauteur de la forme).</p>
+  <h3>Pentes et escaliers</h3><p>Toute forme fermée a un réglage <b>Relief</b> : Plat, Volume, <b>Pente</b> ou <b>Escalier</b>. Règle la hauteur au départ et à l’arrivée, puis oriente la pente en glissant ses poignées <b>bas</b> (blanche) et <b>haut</b> (orange) avec l’outil Sélection. En vue isométrique, la surface est inclinée (ou en marches) avec ses côtés jusqu’au sol ; en vue de dessus, une flèche indique le sens de la montée. L’inclinaison s’affiche en % et en degrés.</p>
   <h3>Flow map</h3><p>Avec l’outil Flow, chaque clic pose une bulle reliée à la précédente. Clique sur une bulle existante pour la relier (deux clics dans les deux sens créent un lien à double sens). Maj+clic repart d’une bulle pour créer une branche. Clic sur un lien : insère une bulle entre deux autres et décale la numérotation. Le panneau Flow liste les étapes, permet de les réordonner, de les décrire et d’exporter le script.</p>
   <h3>Collaboration en ligne</h3><p>Menu <b>☁ En ligne</b> : se connecter (e-mail + mot de passe), <b>publier</b> la carte, puis <b>Partager</b> pour inviter des personnes par e-mail ou ouvrir l’accès à tout compte connecté qui a le lien, en lecture, commentaire ou édition. Les modifications, les curseurs et les personnes présentes s’affichent en direct. Annuler (Ctrl+Z) n’annule que tes propres actions. Si deux personnes modifient le même objet en même temps, la dernière modification l’emporte.</p>
   <h3>Modes</h3><p><b>Édition</b> : tout modifier. <b>Commentaire</b> : poser et éditer des notes seulement. <b>Lecture</b> : consulter, filtrer les icônes, cliquer sur les bulles et icônes pour lire leur fiche.</p></div>`, { wide: true });
